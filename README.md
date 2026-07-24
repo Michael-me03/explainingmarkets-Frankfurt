@@ -112,11 +112,13 @@ step (it must be reachable over HTTPS in production; `http://` is allowed in dev
 and click **Save webhook URL**. As soon as credentials and a URL are both set,
 **Submission is live** flips on automatically — no extra action.
 
-The last item, **Verify your endpoint works**, is optional but recommended. Click
-**Send test event** to send a synthetic delivery. Your handler verifies it, sees
-`event_type == "TEST"`, and ACKs with 200 without submitting; the checklist then
-shows *"Your endpoint responded successfully."* If it doesn't appear right away,
-check the **Health** tab for rolling delivery counters.
+The last item, **Verify your endpoint works**, is optional but strongly
+recommended. Click **Send test event** to send a synthetic delivery. Your
+handler verifies it, sees `event_type == "TEST"`, submits a neutral 0.5
+prediction back (test predictions are never scored), and ACKs with 200; the
+checklist confirms your endpoint responded and your prediction came back. If
+nothing appears right away, check the **Health** tab for rolling delivery
+counters.
 
 ### 6. Edit `predict.py`
 

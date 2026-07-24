@@ -20,8 +20,25 @@ from datetime import datetime, timezone
 
 
 def is_test(event: dict) -> bool:
-    """True for the portal's synthetic 'Test Webhook' deliveries — skip these."""
+    """True for the portal's synthetic 'Test Webhook' deliveries.
+
+    Submit a neutral prediction for these (see ``neutral_predictions``), then
+    ACK — that's how the portal test verifies your full receive → submit loop.
+    Test predictions are accepted by the API but never scored.
+    """
     return event.get("event_type") == "TEST"
+
+
+def neutral_predictions(event: dict) -> list[dict]:
+    """A neutral 0.5 prediction per focal asset.
+
+    Used for TEST events: it exercises your credentials and the submit path
+    without calling your model.
+    """
+    return [
+        {"identifier_value": ticker, "predicted_percentile": 0.5}
+        for ticker in tickers(event)
+    ]
 
 
 def tickers(event: dict) -> list[str]:
