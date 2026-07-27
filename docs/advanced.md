@@ -45,23 +45,46 @@ The URL's subdomain comes from `@modal.asgi_app(label="explaining-markets")`, wh
 makes it `https://{your-workspace}--explaining-markets.modal.run` instead of the
 longer default. Change the `label` to change the subdomain.
 
-## Why synchronous (no queue) in v1
+## Two clocks: 20 seconds to ACK, 5 minutes to predict
 
-`modal_app.py` verifies → predicts → submits → ACKs 200, all in one request. Your
-per-event deadline starts when you ACK 200, so you've always submitted before the
-clock starts. This is the simplest correct design.
+`modal_app.py` verifies → ACKs 200 → spawns `predict_and_submit`. The platform
+runs two independent timers:
 
-If your `predict()` becomes slow (long LLM chains, multiple tools) and webhook
-deliveries start timing out, move to a queue: ACK 200 immediately, push the
-verified event onto a `modal.Queue`, and process + submit in a separate Modal
-function. Keep the `Webhook-Id` dedupe guard — retries still happen.
+| Clock | Budget | Starts | Miss it and… |
+|---|---|---|---|
+| Delivery ACK | 20 s | when the platform POSTs to you | the delivery is retried up to 5 times over ~30 min; 5 consecutive failures emails your admins, ~50 disables your webhook |
+| Prediction window | 5 min | when you ACK 200 | your prediction is tagged late and dropped at scoring |
+
+The 5-minute window only opens once you ACK. Predicting before the ACK spends it
+inside the 20-second budget — a 25-second model call is fine against your
+prediction window and a hard failure against your delivery budget.
+
+The work runs as a spawned Modal function with its own container, so it survives
+the web container scaling down. Once you ACK, the platform will not redeliver, so
+Modal's function retries (and the single retry on the model call in `predict.py`)
+are your durability layer. `modal.Queue` is for fan-out or rate-limiting, not
+durability.
 
 ## Idempotency
 
-Deliveries are deduped on the `Webhook-Id` header (equal to `event["id"]`) via a
-`modal.Dict` that persists across redeploys. The server retries on 5xx and
-timeout, so the same event can arrive more than once; the dedupe guard makes
-reprocessing a no-op.
+Deliveries are deduped on the `Webhook-Id` header (equal to `event["id"]`), which
+is stable across retries. The guard has three states:
+
+* **in flight** — claimed on arrival, before any work. A duplicate landing while
+  the first job runs is skipped, so you never pay for the same model call twice.
+* **done** — set only after the API accepts your prediction. Permanent.
+* **released** — if the job raises, the claim is dropped, so the next delivery of
+  that `Webhook-Id` re-runs it.
+
+Marking an event done up front would be the bug: a failed prediction would look
+handled.
+
+A replay of an older event arrives with a fresh `Webhook-Id`, so a "done" marker
+never blocks one.
+
+The store is a `modal.Dict`, which persists across redeploys. The claim uses
+`put(..., skip_if_exists=True)` so it is atomic: two containers handling a
+duplicate delivery at the same moment can't both win.
 
 ## Not included by design
 

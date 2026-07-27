@@ -25,6 +25,15 @@ from explaining_markets.config import openai_model
 _openai: OpenAI | None = None  # lazy: importing this file must not require a key
 _openai_warned = False         # one-shot warning when no key is configured
 
+# Timeouts, sized against the 5-minute prediction window that opens when your
+# handler ACKs the webhook. Worst case is 15 + (120 x 2) + 15 = 270s, which
+# fits with ~30s to spare. Nothing upstream retries a failed prediction — once
+# the delivery is ACKed the platform considers it done — so the one retry here
+# is the only one you get. Raising either value can push you past the deadline.
+SUMMARY_TIMEOUT_SECONDS = 15.0
+LLM_TIMEOUT_SECONDS = 120.0
+LLM_MAX_RETRIES = 1
+
 
 def predict(event: dict) -> list[dict]:
     """Return predictions for one Explaining Markets event.
@@ -44,10 +53,14 @@ def predict(event: dict) -> list[dict]:
     0.50 = median, 1 = its most positive. It's a cross-sectional rank across the
     quarter's events, not a percentile within the asset's own history.
     """
-    summary = httpx.get(event["information_url"], timeout=10.0)
+    summary = httpx.get(event["information_url"], timeout=SUMMARY_TIMEOUT_SECONDS)
     summary.raise_for_status()
     summary_json = summary.json()
 
+    # One model call per focal asset, in series — so the LLM budget below is
+    # per asset, not per event. Today every event carries a single asset; if
+    # that changes and you need several, run them concurrently rather than
+    # raising the timeout.
     return [
         {
             "identifier_value": asset["identifier_value"],
@@ -116,7 +129,10 @@ def _ask_llm(*, summary: dict, ticker: str, event_type: str) -> float:
             _openai_warned = True
         return 0.5
     if _openai is None:
-        _openai = OpenAI()  # picks up OPENAI_API_KEY from env
+        # picks up OPENAI_API_KEY from env
+        _openai = OpenAI(
+            timeout=LLM_TIMEOUT_SECONDS, max_retries=LLM_MAX_RETRIES
+        )
 
     summary_text = summary.get("summary") if isinstance(summary, dict) else None
     if not summary_text:

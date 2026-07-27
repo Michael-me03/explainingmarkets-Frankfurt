@@ -18,8 +18,10 @@ tests/                     ← predict shape + webhook verification
 ```
 
 When an event fires, the competition sends a **signed webhook** to your URL. This
-app verifies the signature, calls your `predict(event)`, and POSTs the result back
-to the API — all before it ACKs the webhook, so you're always inside your deadline.
+app verifies the signature and ACKs it immediately, then calls your
+`predict(event)` and POSTs the result back in the background. You have
+**20 seconds to ACK** and **5 minutes from that ACK** to submit — so slow work
+goes after the ACK, not before.
 
 ---
 
