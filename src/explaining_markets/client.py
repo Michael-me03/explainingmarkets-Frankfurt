@@ -23,7 +23,7 @@ def submit_predictions(
     event_id: str,
     predictions: list[dict],
     config: Config | None = None,
-    timeout: float = 10.0,
+    timeout: float = 15.0,
 ) -> dict:
     """POST predictions for one event. Returns the parsed response body.
 
