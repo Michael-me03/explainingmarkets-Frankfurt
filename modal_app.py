@@ -74,6 +74,19 @@ def _claim(webhook_id):
     return seen_webhooks.put(webhook_id, "in_flight", skip_if_exists=True)
 
 
+async def _claim_aio(webhook_id):
+    """`_claim` for the async route.
+
+    Modal's blocking interfaces run their own event loop under the hood, so
+    calling them from inside an `async def` stalls the loop — the exact problem
+    ACKing first is meant to solve. The `.aio` variants are the async-native
+    ones; the request path must use these, and only these.
+    """
+    if not webhook_id:
+        return True
+    return await seen_webhooks.put.aio(webhook_id, "in_flight", skip_if_exists=True)
+
+
 def _release(webhook_id, submitted):
     """Mark the claim done on success, or drop it so a redelivery can retry."""
     if not webhook_id:
@@ -145,7 +158,7 @@ def web():
             return Response(content=str(exc), status_code=401)
 
         webhook_id = event.get("id")
-        if not _claim(webhook_id):
+        if not await _claim_aio(webhook_id):
             return Response(status_code=200)
 
         log_deadline(event)
@@ -153,7 +166,7 @@ def web():
         # Webhook" button sends a synthetic TEST event; it takes the same path
         # and submits a neutral prediction (accepted by the API, never scored)
         # so the test exercises your full receive -> submit loop.
-        predict_and_submit.spawn(event, webhook_id)
+        await predict_and_submit.spawn.aio(event, webhook_id)
         return Response(status_code=200)
 
     return api

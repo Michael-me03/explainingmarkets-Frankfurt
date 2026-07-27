@@ -45,23 +45,47 @@ def _test_event(webhook_id: str = "evt_test_abc") -> dict:
     }
 
 
+class _Put:
+    """Callable with an `.aio` attribute, mirroring modal.Dict.put."""
+
+    def __init__(self, store):
+        self.store = store
+
+    def __call__(self, key, value, *, skip_if_exists=False):
+        if skip_if_exists and key in self.store:
+            return False
+        self.store[key] = value
+        return True
+
+    async def aio(self, key, value, *, skip_if_exists=False):
+        return self(key, value, skip_if_exists=skip_if_exists)
+
+
 class FakeDict:
     """Stand-in for modal.Dict with the same atomic-claim semantics."""
 
     def __init__(self):
         self.data: dict[str, str] = {}
-
-    def put(self, key, value, *, skip_if_exists=False):
-        if skip_if_exists and key in self.data:
-            return False
-        self.data[key] = value
-        return True
+        self.put = _Put(self.data)
 
     def __setitem__(self, key, value):
         self.data[key] = value
 
     def pop(self, key, default=None):
         return self.data.pop(key, default)
+
+
+class _Spawn:
+    """Callable with an `.aio` attribute, mirroring modal.Function.spawn."""
+
+    def __init__(self):
+        self.calls: list[tuple] = []
+
+    def __call__(self, *args, **kwargs):
+        self.calls.append(args)
+
+    async def aio(self, *args, **kwargs):
+        return self(*args, **kwargs)
 
 
 @pytest.fixture
@@ -75,13 +99,9 @@ def client(monkeypatch):
 @pytest.fixture
 def spawned(monkeypatch):
     """Record spawn() calls instead of dispatching them to Modal."""
-    calls: list[tuple] = []
-    monkeypatch.setattr(
-        modal_app.predict_and_submit,
-        "spawn",
-        lambda *args, **kwargs: calls.append(args),
-    )
-    return calls
+    spawn = _Spawn()
+    monkeypatch.setattr(modal_app.predict_and_submit, "spawn", spawn)
+    return spawn.calls
 
 
 def test_health_ok(client) -> None:
@@ -113,6 +133,18 @@ def test_duplicate_while_in_flight_is_skipped(client, spawned) -> None:
     assert client.post("/", content=raw_body, headers=headers).status_code == 200
     assert client.post("/", content=raw_body, headers=headers).status_code == 200
     assert len(spawned) == 1  # the redelivery spawned nothing
+
+
+def test_route_uses_the_async_modal_interfaces() -> None:
+    """Regression guard: blocking Modal calls inside the `async def` route stall
+    the event loop -- the exact failure ACKing first is meant to remove. Modal
+    only warns about this at runtime, so pin it here."""
+    import inspect
+
+    src = inspect.getsource(modal_app.web.get_raw_f())
+    assert "await _claim_aio(" in src
+    assert "await predict_and_submit.spawn.aio(" in src
+    assert "seen_webhooks.put(" not in src
 
 
 def test_claim_release_state_machine(monkeypatch) -> None:
