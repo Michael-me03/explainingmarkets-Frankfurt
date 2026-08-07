@@ -1,0 +1,58 @@
+{
+  "bullets": [
+    {
+      "id": "c4575b0c3c31",
+      "category": "High-expectation momentum names",
+      "text": "For stocks that have already re-rated sharply (high multiple, large run-up into the print, crowded momentum), the reaction bar is set by the valuation, not the reported numbers: a big beat that merely validates the embedded trajectory is frequently sold off. Treat high-flying momentum names as negatively skewed even on genuine beats -- keep at or below neutral unless the surprise is unprecedented relative to the run-up, rather than merely consistent with the stock's acceleration.",
+      "created_epoch": 5
+    },
+    {
+      "id": "7fea7258676b",
+      "category": "Priced-in downside / relief rallies",
+      "text": "When a stock has already de-rated sharply on well-known weakness (sector downturn, prior guidance cuts, depressed valuation), a bad print that merely confirms the known deterioration often rallies -- the market prices 'less bad than feared' plus forward positives such as cost cuts, new growth lines, and capital returns. Do not predict bottom-quartile reactions for already-priced negatives unless the print carries genuinely new, large negative information; the asymmetry favors relief.",
+      "created_epoch": 5
+    },
+    {
+      "id": "2c60dc4077f1",
+      "category": "Forward path dominates in small caps",
+      "text": "In small/micro-caps and launch-stage companies, the market prices the forward trajectory (guidance, margins, cash runway) more heavily than the backward reported quarter: a beat that comes with in-line or soft guidance, margin compression, or delayed growth is routinely sold hard below neutral. For these names, anchor on the forward signals and do not let a backward-looking beat carry the prediction above neutral.",
+      "created_epoch": 5
+    },
+    {
+      "id": "26a095cfeb26",
+      "category": "Relief-rally boundary (structural decline)",
+      "text": "The relief-rally asymmetry applies only when the de-rating was driven by a temporary external overhang (sector/cyclical downturn, one-off overhang) and the print shows that driver stabilizing or inflecting. When the de-rating instead reflects the company's own ongoing fundamental decline (shrinking revenue, structurally compressed margins, disrupted launch/execution, impairments), a print that merely continues that trajectory is NOT 'less bad than feared' -- the market sells it again, and cost cuts, buybacks, one-off monetizations, or headline beats do not offset the continued deterioration. Keep such structurally-declining names at or below neutral on relief grounds unless the print shows the decline itself actually reversing.",
+      "created_epoch": 4
+    },
+    {
+      "id": "80365c807336",
+      "category": "Information novelty (d\u00e9j\u00e0 vu catalysts)",
+      "text": "The market pays only for genuinely new information on the print day. Before crediting any headline item -- legal rulings, contract wins, record AUM/fundraising, monthly-disclosed operating metrics, capacity awards, buybacks, or long-dated strategic plans -- verify whether it was already announced, continuously disclosed, or 'telegraphed' before the release; already-known items are already priced and typically have zero-to-negative incremental impact. When a release's headline positives are mostly d\u00e9j\u00e0 vu confirming an already-embedded trajectory rather than adding new information, the stock tends to be sold on the day despite favorable headlines -- strip pre-announced catalysts out of the reaction estimate and anchor the prediction on the residual genuinely-new core metrics only.",
+      "created_epoch": 6
+    },
+    {
+      "id": "6a48531a4594",
+      "category": "Surprise-magnitude anchoring",
+      "text": "Anchor the next-day call on the raw magnitude of the headline surprise versus the company's own guided/prior numbers, not on the narrative reconciliation of it. When the print contains a large, unambiguous beat (revenue/EBITDA/EPS far above the guided midpoint, record results, or first-time profitability), the reaction goes to an extreme positive even in names with high valuation bars, run-ups, or decelerating guidance -- guidance-deceleration, d\u00e9j\u00e0 vu, and valuation-bar concerns are second-order and should not flip a big-magnitude surprise below neutral. Symmetrically, when no such headline surprise exists, peripheral positives (buybacks, asset sales, legal wins, cost cuts, 'stabilizing' language) rarely carry a flat-to-declining core to a positive reaction; the market pays the core numbers and sells the periphery.",
+      "created_epoch": 2
+    },
+    {
+      "id": "45f3480af230",
+      "category": "Forward increment vs backward beat",
+      "text": "When a print's upside is backward-only -- a real but ordinary-magnitude beat (not a record-shattering, far-above-consensus surprise) whose forward guidance decelerates, merely matches, or falls short of the run-rate already embedded in the stock's recent move -- the market routinely sells it into the bottom quartile, regardless of whether the name is a momentum high-flyer, a turnaround rally, or a small cap. The backward beat should not carry the prediction above neutral unless the forward path itself beats the embedded run-rate (accelerating guidance or a genuinely new, larger forward demand signal); an ordinary-magnitude 'big beat + in-line/decelerating forward' is a sell-the-news setup, not an upside event. Reserve the upside case for beats large enough to be genuinely unprecedented against consensus, where the surprise magnitude itself can carry the reaction despite soft guidance.",
+      "created_epoch": 3
+    },
+    {
+      "id": "babe2d0510b4",
+      "category": "Expectation-bar inversion",
+      "text": "Judge the surprise against the expectation already embedded in the stock's pre-print move, not against the company's own guided/prior numbers or the print's narrative sign: in this batch every confident fundamental-content call -- beat-and-raise on a name that had already re-rated, weak/decelerating/withheld-guide print on a washed-out name -- was fully inverted by the market, with the reaction landing near the mirror of the call (strong beats on run-ups sold to the bottom decile, weak prints on washed-out names bought to the top decile). When the pre-print move already embeds the direction your fundamental read points to, do not hedge toward the narrative side or toward neutral: place the call on the opposite side, because a print that merely confirms the embedded trajectory is the setup that gets reversed most completely.",
+      "created_epoch": 2
+    },
+    {
+      "id": "2e6ee3cee510",
+      "category": "Guidance-inversion",
+      "text": "Forward guidance direction is being read as an inverted signal: in this batch, every print whose negatives were soft/withheld/decelerating/cut guidance (including structurally-declining names) rallied to the top decile, while every print whose positives were headline raises, record results, or unprecedented contract/news items sold to the bottom decile. The market is paying the reported-quarter surprise against pre-print expectations and treating guidance direction and headline-positive 'catalysts' as already-priced noise. Concretely: do not take a print below neutral on guidance-deceleration/structural-decline grounds when the reported numbers themselves beat and expectations are low, and do not take a print above neutral on headline-magnitude/raise grounds when the name has already re-rated -- when the directional case rests primarily on guidance content or on headline news rather than on the reported numbers versus the pre-print bar, mirror it.",
+      "created_epoch": 1
+    }
+  ]
+}

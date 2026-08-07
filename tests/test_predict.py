@@ -7,7 +7,7 @@ disclosure fetch so the test is fully offline.
 
 from __future__ import annotations
 
-import predict as predict_module
+import predict_kimi as predict_module
 
 
 SAMPLE_EVENT = {

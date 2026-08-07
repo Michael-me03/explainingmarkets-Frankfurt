@@ -4,26 +4,33 @@
 already been verified for you. Return one prediction per focal asset. Everything
 else in this repo (webhook verification, dedupe, submission) is plumbing.
 
-The default implementation asks an OpenAI model for a calibrated percentile. If
-`OPENAI_API_KEY` is not set, it returns a 0.5 baseline so the full deploy →
-receive → submit round-trip still works without burning credits. Replace the body
-of `predict` with whatever strategy you like — the only contract is the return
-shape documented below.
+The default implementation asks a DeepSeek model for a calibrated percentile
+via a forced tool call. If `DEEPSEEK_API_KEY` is not set, it returns a
+0.5 baseline so the full deploy → receive → submit round-trip still works
+without burning credits. Replace the body of `predict` with whatever strategy
+you like — the only contract is the return shape documented below.
 """
 
 from __future__ import annotations
 
 import json
 import os
+from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timezone
+from pathlib import Path
 
 import httpx
 from openai import OpenAI
 from pydantic import BaseModel, Field
+from data_provider.fmp import get_market_context, get_company_profile_summary
+from data_provider.yfinance import get_market_trend, get_analyst_expectations, get_market_cap_bucket
+from data_provider.sec_edgar import get_recent_filings_summary
 
-from explaining_markets.config import openai_model
+from ace.store import load_rulebook, render as render_rulebook
 
-_openai: OpenAI | None = None  # lazy: importing this file must not require a key
-_openai_warned = False         # one-shot warning when no key is configured
+
+_deepseek: OpenAI | None = None  # lazy: importing this file must not require a key
+_deepseek_warned = False         # one-shot warning when no key is configured
 
 # Timeouts, sized against the 5-minute prediction window that opens when your
 # handler ACKs the webhook. Worst case is 15 + (120 x 2) + 15 = 270s, which
@@ -33,6 +40,54 @@ _openai_warned = False         # one-shot warning when no key is configured
 SUMMARY_TIMEOUT_SECONDS = 15.0
 LLM_TIMEOUT_SECONDS = 120.0
 LLM_MAX_RETRIES = 1
+
+# `temperature=1` makes a single draw noisy -- the accept/reject gate in
+# ace/train.py already averages multiple draws to see past that noise, and
+# the same noise hits every live submission just as much. Averaging
+# N_ENSEMBLE_DRAWS concurrent draws per asset applies that same fix live.
+# Concurrent, not sequential: worst case is still bounded by one call's
+# timeout (120s x 2 retries = 240s), not N x that, so this doesn't change the
+# 270s budget math above.
+N_ENSEMBLE_DRAWS = 3
+
+# DeepSeek is OpenAI-compatible; only the base_url + model differ.
+# deepseek-v4-flash is the cheap/fast tier; deepseek-v4-pro is the stronger,
+# pricier reasoning tier. Swap the active line to A/B test.
+DEEPSEEK_BASE_URL = "https://api.deepseek.com/v1"
+DEEPSEEK_MODEL = "deepseek-v4-flash"
+#DEEPSEEK_MODEL = "deepseek-v4-pro"
+
+# Toggle each dormant context signal independently so the backtest notebook can
+# A/B them via examples.scoring.score_submission and log the delta to
+# delta_r2_log.csv -- flip to False here once a signal is confirmed not to help.
+USE_MARKET_TREND = False
+USE_ANALYST_TARGETS = False
+# Company blurb (FMP: name/sector/industry) and market-cap bucket (yfinance:
+# small/mid/large) are separate flags -- FMP's free tier rate-limits hard
+# (429s even with the throttle in data_provider/fmp.py), so this can run with
+# yfinance's market cap on while FMP's profile lookup stays off.
+USE_COMPANY_PROFILE = False
+USE_MARKET_CAP = True
+# Recent SEC filing types/dates only (no filing content) -- free, no API key,
+# separate throttle/cache in data_provider/sec_edgar.py so it doesn't compete
+# with FMP's already-tight rate limit.
+USE_SEC_FILINGS = True
+
+# Rulebook produced offline by `ace/train.py` (Generator/Reflector/Curator loop).
+# Loaded once per process -- it's only ever written between deploys, never at
+# request time, so there is no online adaptation and no per-call disk read.
+RULEBOOK_PATH = Path(__file__).with_name("rulebook.json")
+_rulebook_text_cache: str | None = None
+
+
+def _rulebook_block(rulebook_text: str | None) -> str:
+    """Resolve the rulebook text to inject: explicit override, else the cached file."""
+    global _rulebook_text_cache
+    if rulebook_text is not None:
+        return rulebook_text
+    if _rulebook_text_cache is None:
+        _rulebook_text_cache = render_rulebook(load_rulebook(RULEBOOK_PATH))
+    return _rulebook_text_cache
 
 
 def predict(event: dict) -> list[dict]:
@@ -57,25 +112,66 @@ def predict(event: dict) -> list[dict]:
     summary.raise_for_status()
     summary_json = summary.json()
 
-    # One model call per focal asset, in series — so the LLM budget below is
-    # per asset, not per event. Today every event carries a single asset; if
-    # that changes and you need several, run them concurrently rather than
-    # raising the timeout.
+    # One ensembled prediction per focal asset. Today every event carries a
+    # single asset, so this is N_ENSEMBLE_DRAWS calls total, all concurrent;
+    # if multi-asset events show up, the per-asset ensembles would need to run
+    # concurrently with each other too, rather than serially, to stay in budget.
     return [
         {
             "identifier_value": asset["identifier_value"],
-            "predicted_percentile": _ask_llm(
+            "predicted_percentile": _ensembled_percentile(
                 summary=summary_json,
                 ticker=asset["identifier_value"],
                 event_type=event["event_type"],
+                as_of=event.get("knowledge_cutoff"),
             ),
         }
         for asset in event["focal_assets"]
     ]
 
 
+PREDICT_LOG_PATH = Path(__file__).with_name("logs") / "predict_log.jsonl"
+
+
+def _log_prediction(**record) -> None:
+    """Append one compact JSON line per prediction to logs/predict_log.jsonl.
+
+    Local-only: useful for local/backtest runs, but the deployed Modal
+    container's filesystem is ephemeral -- each predict_and_submit call gets
+    its own fresh container, so this does not persist across live webhook
+    calls without a Modal Volume attached.
+    """
+    record["timestamp"] = datetime.now(timezone.utc).isoformat()
+    try:
+        PREDICT_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+        with PREDICT_LOG_PATH.open("a") as f:
+            f.write(json.dumps(record) + "\n")
+    except Exception as e:
+        print(f"[WARN] could not write {PREDICT_LOG_PATH.name}: {e}")
+
+
+def _ensembled_percentile(
+    *, summary: dict, ticker: str, event_type: str, as_of: str | None
+) -> float:
+    """Average `N_ENSEMBLE_DRAWS` concurrent `_ask_llm` draws into one percentile.
+
+    Each draw is an independent DeepSeek call at temperature=1 -- averaging
+    smooths out per-call sampling noise, the same fix already applied to the
+    ace/train.py validation gate, now applied to what actually gets submitted.
+    """
+    def _one_draw(_):
+        return _ask_llm(summary=summary, ticker=ticker, event_type=event_type, as_of=as_of).predicted_percentile
+
+    with ThreadPoolExecutor(max_workers=N_ENSEMBLE_DRAWS) as pool:
+        draws = list(pool.map(_one_draw, range(N_ENSEMBLE_DRAWS)))
+    averaged = sum(draws) / len(draws)
+    _log_prediction(ticker=ticker, event_type=event_type, draws=draws, predicted_percentile=averaged)
+    return averaged
+
+
 # ----------------------------------------------------------------------
-# Default strategy: a single calibrated LLM call per asset.
+# Default strategy: a single calibrated LLM call per asset, using a forced
+# tool call to get a structured, schema-validated response.
 # Swap this out, or rewrite `predict` entirely, to enter your own model.
 # ----------------------------------------------------------------------
 
@@ -83,12 +179,18 @@ def predict(event: dict) -> list[dict]:
 class Prediction(BaseModel):
     """Structured response shape for the LLM call.
 
-    The `Field(ge=0, le=1)` constraint flows through into the JSON schema OpenAI's
-    structured-outputs mode enforces during decoding, so the model is guaranteed to
-    return a percentile in [0, 1] — no manual clamping or fallback parsing needed.
+    The `Field(ge=0, le=1)` constraint is enforced by us via Pydantic after
+    parsing the tool call arguments — DeepSeek's tool-calling doesn't guarantee
+    numeric bounds the way a JSON Schema `minimum`/`maximum` might suggest,
+    so we validate on our side rather than trust it blindly.
+
+    `rationale` is never submitted to the competition -- it exists so the ACE
+    training loop (ace/reflector.py) can diagnose *why* a prediction missed,
+    not just by how much. The live path ignores it entirely.
     """
 
     predicted_percentile: float = Field(ge=0.0, le=1.0)
+    rationale: str | None = None
 
 
 SYSTEM_PROMPT = """\
@@ -108,30 +210,106 @@ Calibration discipline:
   multi-signal evidence. Do not exceed 0.90 or fall below 0.10 without
   overwhelming, lopsided evidence.
 - Tone alone (confident vs hedging language) should move you no more than
-  ~0.03 absent quantitative confirmation.
+  ~0.10 absent quantitative confirmation.
+
+You must respond by calling the submit_prediction tool — do not answer in plain text.
 """
 
+# Tool definition used to force DeepSeek to return a structured percentile via
+# tool_calls, instead of relying on prose or loose JSON-mode output.
+_PREDICTION_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "submit_prediction",
+        "description": "Submit the calibrated percentile prediction for this event.",
+        "parameters": {
+            "type": "object",
+            "required": ["predicted_percentile"],
+            "properties": {
+                "predicted_percentile": {
+                    "type": "number",
+                    "description": (
+                        "Cross-sectional percentile in [0, 1] for the asset's "
+                        "next-day abnormal return this quarter. 0 = most "
+                        "negative reaction of the quarter, 0.5 = median, "
+                        "1 = most positive."
+                    ),
+                },
+                "rationale": {
+                    "type": "string",
+                    "description": (
+                        "2-3 sentence justification citing the specific facts that "
+                        "drove the percentile. Not submitted -- used only to "
+                        "diagnose misses during offline rulebook training."
+                    ),
+                },
+            },
+        },
+    },
+}
 
-def _ask_llm(*, summary: dict, ticker: str, event_type: str) -> float:
-    """Ask the configured model for a calibrated percentile via structured outputs.
 
-    Returns the model's `predicted_percentile`. Falls back to 0.5 if no
-    `OPENAI_API_KEY` is configured or the model refuses; the [0, 1] bound is
-    enforced by the JSON schema, not by us.
+def _ask_llm(
+    *,
+    summary: dict,
+    ticker: str,
+    event_type: str,
+    as_of: str | None = None,
+    peer_context: str | None = None,
+    surprise_signal: str | None = None,
+    rulebook_text: str | None = None,
+) -> Prediction:
+    """Ask the configured DeepSeek model for a calibrated percentile via a forced tool call.
+
+    `as_of` is the event's `knowledge_cutoff` (ISO-8601 string) — it bounds the
+    yfinance price window so historical backtests never see price data from
+    after what would have been known at prediction time. Live calls pass the
+    real `knowledge_cutoff` too; omitting it just defaults to "now", which is
+    equivalent since the event hasn't happened yet.
+
+    `peer_context` is optional: the mean next-day abnormal return of same-sector
+    events that reported strictly earlier in the same quarter, as a formatted
+    string (or a "no peers yet" message). Only the notebook backtest currently
+    computes and passes this — the live `predict()` path doesn't have cheap
+    access to the rest of the quarter's sibling events, so it defaults to None.
+
+    `surprise_signal` is optional and EXPERIMENTAL / BACKTEST-ONLY: a formatted
+    quarter-to-date percentile rank of this event's EPS/revenue surprise vs.
+    analyst consensus. The archive has this pre-computed (`metrics.earnings_
+    surprise.surprise`) for backtesting, but the live webhook event does NOT
+    include it -- there's no consensus-estimate source wired up yet (FMP's
+    analyst-estimates endpoint is paywalled on the free tier). So this stays
+    None in the live `predict()` path until that's solved; it exists purely so
+    the notebook backtest can measure whether this signal is worth the effort
+    of finding a live consensus source at all -- and so `ace/train.py` can feed
+    it to the Reflector, which can only turn it into a *qualitative* rulebook
+    heuristic (no raw numeric rank reaches the live model).
+
+    `rulebook_text` overrides the rulebook block normally loaded from
+    `rulebook.json` -- used by `ace/train.py` to test a candidate rulebook
+    before it's written to disk. Live `predict()` never passes this, so a
+    deploy always runs whatever is currently checked in (no online adaptation;
+    the 5-minute webhook deadline doesn't leave room for a live Reflector pass).
+
+    Returns the model's `Prediction` (percentile + optional rationale). Falls
+    back to a 0.5 placeholder if no `DEEPSEEK_API_KEY` is configured, the model
+    doesn't return the tool call, or the arguments fail validation.
     """
-    global _openai, _openai_warned
-    if not os.environ.get("OPENAI_API_KEY"):
-        if not _openai_warned:
+    global _deepseek, _deepseek_warned
+    if not os.environ.get("DEEPSEEK_API_KEY"):
+        if not _deepseek_warned:
             print(
-                "[WARN] OPENAI_API_KEY not set — submitting 0.5 placeholder. "
+                "[WARN] DEEPSEEK_API_KEY not set — submitting 0.5 placeholder. "
                 "Set the key (or edit predict.py) for real predictions."
             )
-            _openai_warned = True
-        return 0.5
-    if _openai is None:
-        # picks up OPENAI_API_KEY from env
-        _openai = OpenAI(
-            timeout=LLM_TIMEOUT_SECONDS, max_retries=LLM_MAX_RETRIES
+            _deepseek_warned = True
+        return Prediction(predicted_percentile=0.5)
+    if _deepseek is None:
+        _deepseek = OpenAI(
+            api_key=os.environ["DEEPSEEK_API_KEY"],
+            base_url=DEEPSEEK_BASE_URL,
+            timeout=LLM_TIMEOUT_SECONDS,
+            max_retries=LLM_MAX_RETRIES,
         )
 
     summary_text = summary.get("summary") if isinstance(summary, dict) else None
@@ -139,28 +317,127 @@ def _ask_llm(*, summary: dict, ticker: str, event_type: str) -> float:
         summary_text = json.dumps(summary)
     summary_text = summary_text[:8000]
 
+    company_line = ""
+    if USE_COMPANY_PROFILE or USE_MARKET_CAP or USE_SEC_FILINGS:
+        bits = []
+        if USE_COMPANY_PROFILE:
+            profile = get_company_profile_summary(ticker)
+            if profile:
+                bits.append(profile)
+        if USE_MARKET_CAP:
+            cap = get_market_cap_bucket(ticker)
+            if cap:
+                bits.append(f"{cap['bucket']} (~${cap['market_cap'] / 1e9:.1f}B market cap)")
+        if USE_SEC_FILINGS:
+            filings = get_recent_filings_summary(ticker)
+            if filings:
+                bits.append(f"recent SEC filings: {filings}")
+        if bits:
+            company_line = f"Company: {' -- '.join(bits)}\n\n"
+
+    price_history_text = "No price history available."
+    if USE_MARKET_TREND:
+        trend = get_market_trend(ticker, as_of=as_of)
+        if trend:
+            price_history_text = (
+                f"90-day realized volatility (annualized): {trend['realized_volatility_annualized']!r}\n"
+                f"90-day price trend: {trend['trend_pct']!r}%\n"
+                f"Last 10 closes: {trend['closes'][-10:]}"
+            )
+
+    analyst_text = "No analyst price targets available."
+    if USE_ANALYST_TARGETS:
+        analyst = get_analyst_expectations(ticker, as_of=as_of)
+        analyst_text = (
+            json.dumps(analyst) if analyst
+            else "No analyst price targets available (backtests never get this — live-only, current-targets data)."
+        )
+
+    peer_section = (
+        f"Same-sector reference (mean next-day abnormal return of same-sector "
+        f"peers that already reported this quarter): {peer_context}\n\n"
+        if peer_context else ""
+    )
+
+    surprise_section = (
+        f"Quantitative surprise rank (this event's EPS/revenue surprise vs. "
+        f"analyst consensus, ranked against all events so far this quarter, "
+        f"0=most negative surprise, 1=most positive): {surprise_signal}\n\n"
+        if surprise_signal else ""
+    )
+
+    market_lines = []
+    if USE_MARKET_TREND:
+        market_lines.append(
+            f"Price history (last 90 trading days, volatility as a rough scale "
+            f"reference for how big a typical move for this ticker is):\n{price_history_text}\n"
+        )
+    if USE_ANALYST_TARGETS:
+        market_lines.append(
+            f"Analyst price targets (current consensus, for general valuation context):\n{analyst_text}\n"
+        )
+    market_section = ("\n".join(market_lines) + "\n\n") if market_lines else ""
+
+    rulebook_section = _rulebook_block(rulebook_text)
+
     user_prompt = (
         f"Event type: {event_type}\n"
         f"Ticker: {ticker}\n\n"
+        f"{company_line}"
         f"Event summary:\n{summary_text}\n\n"
+        #f"{market_section}"
+        #f"{peer_section}"
+        #f"{surprise_section}"
         "Weigh, in roughly this order:\n"
         "  1. Quantitative surprise vs expectations — revenue, EPS, segment metrics.\n"
         "  2. Guidance / outlook — raises, holds, cuts vs the prior trajectory.\n"
         "  3. Strategic shifts — product launches, M&A, capital allocation, leadership.\n"
         "  4. Tone and confidence in management commentary (small weight).\n"
         "  5. Risks called out — regulatory, supply chain, demand, competition.\n\n"
-        f"Predict the next-day unexpected-return percentile for {ticker}."
+        "If a same-sector reference is given, use it only as a mild anchor — sector-wide "
+        "drift this quarter, not a substitute for this event's own facts.\n\n"
+        "If a quantitative surprise rank is given, treat it as a strong, reliable signal "
+        "(backtesting shows it's one of the best single predictors of next-day reaction) — "
+        "weigh it more heavily than tone or qualitative framing, though it can still be "
+        "outweighed by a clear guidance change in the opposite direction.\n\n"
+        f"Predict the next-day unexpected-return percentile for {ticker}. "
+        "Call the submit_prediction tool with your answer."
     )
 
-    resp = _openai.chat.completions.parse(
-        model=openai_model(),
-        messages=[
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": user_prompt},
-        ],
-        response_format=Prediction,
-    )
-    parsed = resp.choices[0].message.parsed
-    if parsed is None:
-        return 0.5  # model refused; competition expects a number
-    return parsed.predicted_percentile
+    system_prompt = SYSTEM_PROMPT + (f"\n{rulebook_section}" if rulebook_section else "")
+
+    try:
+        resp = _deepseek.chat.completions.create(
+            model=DEEPSEEK_MODEL,
+            temperature=1,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            tools=[_PREDICTION_TOOL],
+            # Must stay "auto": deepseek-v4-flash serves this call in "thinking mode"
+            # by default, and its API rejects a forced tool_choice outright (400:
+            # "Thinking mode does not support this tool_choice") -- confirmed by
+            # actually hitting the error while testing the ace/ training loop. Not
+            # an oversight carried over from predict_kimi.py; auto is required here.
+            tool_choice="auto",
+        )
+    except Exception as e:
+        # Network/timeout/API errors (e.g. openai.APITimeoutError) used to
+        # propagate uncaught -- fine for a single live prediction (modal_app.py
+        # catches it at the top level), but fatal for ace/train.py: one flaky
+        # call among hundreds of concurrent Generator calls would crash the
+        # entire training run, losing all progress since the last checkpoint.
+        print(f"[WARN] DeepSeek call failed for {ticker}: {e} -- submitting 0.5 placeholder.")
+        return Prediction(predicted_percentile=0.5)
+
+    message = resp.choices[0].message
+    tool_calls = message.tool_calls
+    if not tool_calls:
+        return Prediction(predicted_percentile=0.5)  # model didn't call the tool
+
+    try:
+        arguments = json.loads(tool_calls[0].function.arguments)
+        return Prediction.model_validate(arguments)
+    except Exception:
+        return Prediction(predicted_percentile=0.5)  # malformed/refused tool arguments

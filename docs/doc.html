@@ -1,0 +1,575 @@
+<title>Predictor-Architektur — Explaining Markets</title>
+<style>
+  :root {
+    --bg: #0b0f14;
+    --surface: #121820;
+    --surface-2: #1a222c;
+    --ink: #e4e7ea;
+    --ink-dim: #8894a3;
+    --ink-faint: #566072;
+    --line: #232c37;
+    --accent: #e2a33d;
+    --accent-ink: #171003;
+    --accent-soft: #3a2c15;
+    --ok: #5fb88a;
+    --ok-soft: #14261e;
+    --warn: #e2a33d;
+    --warn-soft: #3a2c15;
+    --bad: #d9695a;
+    --bad-soft: #341a17;
+  }
+  :root[data-theme="light"] {
+    --bg: #f4f2ec;
+    --surface: #ffffff;
+    --surface-2: #ece8dd;
+    --ink: #1c1a15;
+    --ink-dim: #5c5648;
+    --ink-faint: #948d7a;
+    --line: #ddd7c6;
+    --accent: #b3761f;
+    --accent-ink: #fff8ec;
+    --accent-soft: #f0dfbc;
+    --ok: #2f7a54;
+    --ok-soft: #e2f0e8;
+    --warn: #b3761f;
+    --warn-soft: #f0dfbc;
+    --bad: #b3402f;
+    --bad-soft: #f4e0dc;
+  }
+  @media (prefers-color-scheme: light) {
+    :root:not([data-theme="dark"]) {
+      --bg: #f4f2ec;
+      --surface: #ffffff;
+      --surface-2: #ece8dd;
+      --ink: #1c1a15;
+      --ink-dim: #5c5648;
+      --ink-faint: #948d7a;
+      --line: #ddd7c6;
+      --accent: #b3761f;
+      --accent-ink: #fff8ec;
+      --accent-soft: #f0dfbc;
+      --ok: #2f7a54;
+      --ok-soft: #e2f0e8;
+      --warn: #b3761f;
+      --warn-soft: #f0dfbc;
+      --bad: #b3402f;
+      --bad-soft: #f4e0dc;
+    }
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    font-size: 15.5px;
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+  .mono {
+    font-family: ui-monospace, "SF Mono", "Cascadia Code", "JetBrains Mono", Consolas, monospace;
+    font-variant-numeric: tabular-nums;
+  }
+  h1, h2, h3, .label {
+    font-family: ui-monospace, "SF Mono", "Cascadia Code", "JetBrains Mono", Consolas, monospace;
+    text-wrap: balance;
+  }
+
+  a { color: var(--accent); }
+
+  /* ---- shell ---- */
+  .nav {
+    position: sticky;
+    top: 0;
+    z-index: 20;
+    display: flex;
+    gap: 18px;
+    align-items: center;
+    padding: 12px 28px;
+    background: color-mix(in srgb, var(--bg) 88%, transparent);
+    backdrop-filter: blur(8px);
+    border-bottom: 1px solid var(--line);
+    overflow-x: auto;
+  }
+  .nav-title {
+    font-weight: 700;
+    font-size: 13px;
+    color: var(--ink);
+    white-space: nowrap;
+    letter-spacing: 0.02em;
+  }
+  .nav a {
+    font-size: 12.5px;
+    color: var(--ink-dim);
+    text-decoration: none;
+    white-space: nowrap;
+    letter-spacing: 0.01em;
+  }
+  .nav a:hover { color: var(--accent); }
+
+  main {
+    max-width: 980px;
+    margin: 0 auto;
+    padding: 40px 28px 120px;
+  }
+
+  header.hero {
+    padding: 8px 0 36px;
+    border-bottom: 1px solid var(--line);
+    margin-bottom: 40px;
+  }
+  .eyebrow {
+    font-size: 11.5px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin: 0 0 10px;
+  }
+  h1 {
+    font-size: 27px;
+    font-weight: 700;
+    margin: 0 0 12px;
+    letter-spacing: -0.01em;
+  }
+  .lede {
+    max-width: 62ch;
+    color: var(--ink-dim);
+    font-size: 15px;
+    margin: 0 0 16px;
+  }
+  .meta-row {
+    display: flex;
+    gap: 20px;
+    flex-wrap: wrap;
+    font-size: 12.5px;
+    color: var(--ink-faint);
+  }
+  .meta-row span b { color: var(--ink-dim); font-weight: 600; }
+
+  section { margin-bottom: 56px; scroll-margin-top: 64px; }
+  section > h2 {
+    font-size: 12px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--ink-dim);
+    margin: 0 0 6px;
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+  }
+  section > h2 .n { color: var(--accent); }
+  section > .section-desc {
+    color: var(--ink-dim);
+    font-size: 14px;
+    max-width: 68ch;
+    margin: 0 0 22px;
+  }
+
+  /* ---- submission cards ---- */
+  .cards {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+    gap: 14px;
+  }
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    padding: 16px 18px 18px;
+    position: relative;
+  }
+  .card-name {
+    font-weight: 700;
+    font-size: 14px;
+    margin: 0 0 2px;
+  }
+  .card-model {
+    font-size: 11.5px;
+    color: var(--ink-faint);
+    margin: 0 0 12px;
+  }
+  .pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 10.5px;
+    font-family: ui-monospace, monospace;
+    padding: 2px 8px;
+    border-radius: 20px;
+    letter-spacing: 0.02em;
+    position: absolute;
+    top: 16px;
+    right: 16px;
+  }
+  .pill.ok { background: var(--ok-soft); color: var(--ok); }
+  .pill.warn { background: var(--warn-soft); color: var(--warn); }
+  .feat-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 5px; }
+  .feat-list li {
+    font-size: 12.5px;
+    color: var(--ink-dim);
+    display: flex;
+    gap: 8px;
+    align-items: baseline;
+  }
+  .feat-list li .dot { color: var(--ink-faint); flex-shrink: 0; }
+  .feat-list li.off { color: var(--ink-faint); text-decoration: line-through; text-decoration-color: var(--line); }
+
+  /* ---- diagram panels ---- */
+  .diagram-panel {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    padding: 18px;
+    overflow-x: auto;
+  }
+  .diagram-caption {
+    font-size: 12px;
+    color: var(--ink-faint);
+    margin: 10px 2px 0;
+  }
+  pre.mermaid { margin: 0; display: flex; justify-content: center; min-width: 560px; }
+
+  /* ---- data provider table ---- */
+  .table-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 4px; }
+  table { border-collapse: collapse; width: 100%; min-width: 640px; font-size: 13px; }
+  thead th {
+    text-align: left;
+    font-size: 10.5px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--ink-faint);
+    font-weight: 600;
+    padding: 10px 14px;
+    background: var(--surface-2);
+    border-bottom: 1px solid var(--line);
+    white-space: nowrap;
+  }
+  tbody td {
+    padding: 11px 14px;
+    border-bottom: 1px solid var(--line);
+    color: var(--ink-dim);
+    vertical-align: top;
+  }
+  tbody tr:last-child td { border-bottom: none; }
+  tbody tr:hover { background: var(--surface-2); }
+  td .file { color: var(--accent); font-family: ui-monospace, monospace; font-size: 12px; white-space: nowrap; }
+  td.primary { color: var(--ink); font-weight: 600; }
+
+  /* ---- file map ---- */
+  .filemap {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    padding: 18px 20px;
+    font-family: ui-monospace, monospace;
+    font-size: 12.5px;
+    line-height: 1.85;
+    overflow-x: auto;
+  }
+  .filemap .dir { color: var(--ink-dim); }
+  .filemap .f { color: var(--ink); }
+  .filemap .comment { color: var(--ink-faint); }
+  .filemap .indent { color: var(--ink-faint); }
+
+  /* ---- status list ---- */
+  .status-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
+  .status-list li {
+    display: grid;
+    grid-template-columns: 20px 1fr;
+    gap: 12px;
+    align-items: start;
+    font-size: 13.5px;
+    color: var(--ink-dim);
+    padding: 12px 14px;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 4px;
+  }
+  .status-list .mark { font-size: 14px; line-height: 1.4; }
+  .status-list .mark.pending { color: var(--warn); }
+  .status-list .mark.gap { color: var(--bad); }
+  .status-list b { color: var(--ink); }
+  .status-list code { color: var(--accent); font-size: 12px; }
+
+  code { font-family: ui-monospace, monospace; font-size: 0.92em; background: var(--surface-2); padding: 1px 5px; border-radius: 3px; color: var(--ink); }
+
+  footer {
+    margin-top: 60px;
+    padding-top: 20px;
+    border-top: 1px solid var(--line);
+    font-size: 12px;
+    color: var(--ink-faint);
+  }
+</style>
+
+<nav class="nav">
+  <span class="nav-title">◆ PREDICTOR-ARCHITEKTUR</span>
+  <a href="#submissions">Submissions</a>
+  <a href="#live">Live-Pfad</a>
+  <a href="#training">ACE-Training</a>
+  <a href="#backtest">Backtest</a>
+  <a href="#providers">Data Provider</a>
+  <a href="#files">Dateien</a>
+  <a href="#erd">ER-Diagramm</a>
+  <a href="#status">Offene Punkte</a>
+</nav>
+
+<main>
+  <header class="hero">
+    <p class="eyebrow">Explaining Markets · starter-modal</p>
+    <h1>Wie das System zusammenhängt</h1>
+    <p class="lede">
+      Drei Pfade, ein Rulebook: der Live-Prediction-Pfad, der offline
+      ACE-Trainingsloop, der die Rulebook-Datei füttert, und der
+      Notebook-Backtest, der beides gegen echte historische Outcomes prüft.
+    </p>
+    <div class="meta-row">
+      <span>Stand: <b>7. Aug 2026</b></span>
+      <span>Modell-Provider: <b>DeepSeek (MC) · Kimi (signal, 02)</b></span>
+      <span>Rulebook: <b>8 Bullets</b>, <code>rulebook.json</code></span>
+    </div>
+  </header>
+
+  <section id="submissions">
+    <h2><span class="n">01</span> Drei Live-Submissions</h2>
+    <p class="section-desc">Alle drei laufen gegen dieselbe Codebasis, aber mit unterschiedlichem <code>predict.py</code>-Stand zum Zeitpunkt ihres letzten Deploys.</p>
+    <div class="cards">
+      <div class="card">
+        <span class="pill ok">● live</span>
+        <p class="card-name">Frankfurt-signal</p>
+        <p class="card-model">Kimi k2.7-code</p>
+        <ul class="feat-list">
+          <li class="off"><span class="dot">–</span> Rulebook</li>
+          <li class="off"><span class="dot">–</span> Zusatzsignale</li>
+          <li class="off"><span class="dot">–</span> Ensembling</li>
+        </ul>
+      </div>
+      <div class="card">
+        <span class="pill ok">● live</span>
+        <p class="card-name">Frankfurt-02</p>
+        <p class="card-model">Kimi k2.7-code</p>
+        <ul class="feat-list">
+          <li><span class="dot">＋</span> Rulebook — statisch, 3 Bullets im Prompt</li>
+          <li class="off"><span class="dot">–</span> Zusatzsignale</li>
+          <li class="off"><span class="dot">–</span> Ensembling</li>
+        </ul>
+      </div>
+      <div class="card">
+        <span class="pill warn">◐ 2 Tage alt</span>
+        <p class="card-name">Frankfurt-MC</p>
+        <p class="card-model">DeepSeek v4-flash</p>
+        <ul class="feat-list">
+          <li><span class="dot">＋</span> Rulebook — dynamisch aus <code>rulebook.json</code></li>
+          <li><span class="dot">＋</span> Market Cap, Company Profile</li>
+          <li class="off"><span class="dot">–</span> SEC Filings, Ensembling <span class="mono">(seit Deploy hinzugefügt, noch nicht live)</span></li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <section id="live">
+    <h2><span class="n">02</span> Live-Prediction-Pfad</h2>
+    <p class="section-desc">Ein Webhook-Event, ACK innerhalb von 20s, dann bis zu 5 Minuten Zeit für <code>predict()</code> und den Submit zurück an die Explaining-Markets-API.</p>
+    <div class="diagram-panel">
+      <pre class="mermaid">
+flowchart LR
+    A["Webhook Event"] --> B["modal_app.py<br/>Signatur prüfen, ACK 200"]
+    B --> C["predict_and_submit()<br/>eigener Container"]
+    C --> D["predict.py: predict()"]
+    D --> E["_ensembled_percentile()<br/>3 parallele Draws"]
+    E --> F["_ask_llm() × 3"]
+    F --> G["DeepSeek API<br/>SYSTEM_PROMPT + rulebook.json<br/>+ Market Cap + SEC Filings"]
+    G --> H["Mittelwert der 3 Draws"]
+    H --> I["submit_predictions()"]
+    I --> J["Explaining Markets API"]
+    E -.lokal.-> K["predict_log.jsonl"]
+      </pre>
+    </div>
+    <p class="diagram-caption">predict_log.jsonl persistiert nur bei lokalen Läufen — Modal-Container sind pro Aufruf frisch, kein Volume angehängt.</p>
+  </section>
+
+  <section id="training">
+    <h2><span class="n">03</span> ACE-Trainingsloop <span class="mono" style="font-size:11px; text-transform:none; letter-spacing:0; color:var(--ink-faint);">(ace/train.py, offline)</span></h2>
+    <p class="section-desc">Generator → Reflector → Curator, mit einem Accept/Reject-Gate gegen einen 3-fach gemittelten Validierungsscore, um Sampling-Rauschen nicht mit echtem Fortschritt zu verwechseln.</p>
+    <div class="diagram-panel">
+      <pre class="mermaid">
+flowchart TD
+    A["Archiv laden<br/>2025Q4+2026Q1 Train · 2026Q2 Val"] --> B["Baseline-Score<br/>3× gemittelt"]
+    B --> C["Epoche: Generator<br/>400 Events, aktuelles Rulebook"]
+    C --> D["Worst-N Misses"]
+    D --> E["Reflector<br/>1 Bullet-Vorschlag<br/>sieht Rulebook + SYSTEM_PROMPT"]
+    E --> F["Curator<br/>Merge, Dedup pro Kategorie"]
+    F --> G["Kandidat validieren<br/>3× gemittelt"]
+    G --> H{"besser als<br/>bisheriger Bestwert?"}
+    H -->|ja| I["akzeptieren<br/>Checkpoint → rulebook.json"]
+    H -->|nein| J["verwerfen"]
+    I --> C
+    J --> C
+      </pre>
+    </div>
+    <p class="diagram-caption">10 Epochen Standardlauf · <code>--val-draws 3</code> gegen Rauschen · Checkpoint nach jeder akzeptierten Epoche, nicht erst am Ende.</p>
+  </section>
+
+  <section id="backtest">
+    <h2><span class="n">04</span> Backtest-Pfad <span class="mono" style="font-size:11px; text-transform:none; letter-spacing:0; color:var(--ink-faint);">(Notebook, gegen echte Outcomes)</span></h2>
+    <p class="section-desc">Reproduziert die exakte Wettbewerbs-Scoring-Formel offline, um <code>predict.py</code>-Änderungen vor dem Live-Deploy zu validieren.</p>
+    <div class="diagram-panel">
+      <pre class="mermaid">
+flowchart LR
+    A["01_historical_archive.ipynb"] --> B["Archiv-Events + car1"]
+    B --> C["predict.py::_ask_llm()"]
+    C --> D["examples.scoring<br/>percentile_ranks, OLS-Fit"]
+    D --> E["delta_r_squared_imputed"]
+    E --> F["delta_r2_log.csv"]
+      </pre>
+    </div>
+  </section>
+
+  <section id="providers">
+    <h2><span class="n">05</span> Data Provider</h2>
+    <p class="section-desc">Alle drei extern angebundenen Quellen sind gedrosselt und gecacht — Konsequenz aus zwei Rate-Limit-Vorfällen während dieser Session.</p>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr><th>Quelle</th><th>Datei</th><th>Liefert</th><th>Schutz</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td class="primary">FMP</td>
+            <td class="file">data_provider/fmp.py</td>
+            <td>Company-Profil (Name, Sektor, Industrie)</td>
+            <td>0.35s-Throttle, Disk-Cache · Free-Tier limitiert hart</td>
+          </tr>
+          <tr>
+            <td class="primary">yfinance</td>
+            <td class="file">data_provider/yfinance.py</td>
+            <td>Market-Cap-Bucket (small/mid/large), Sektor, Kurstrend</td>
+            <td>0.35s-Throttle auf <code>.info</code>, Disk-Cache</td>
+          </tr>
+          <tr>
+            <td class="primary">SEC EDGAR</td>
+            <td class="file">data_provider/sec_edgar.py</td>
+            <td>Letzte 3 Filings (Typ + Datum, kein Inhalt)</td>
+            <td>0.3s-Throttle, Ticker→CIK gecacht · kostenlos, kein Key</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section id="files">
+    <h2><span class="n">06</span> Dateireferenz</h2>
+    <div class="filemap">
+      <div><span class="f">predict.py</span> <span class="comment">— Generator, Ensembling, alle Signal-Flags</span></div>
+      <div><span class="f">predict_kimi.py</span> <span class="comment">— Backup, entspricht Frankfurt-02s Deploy-Stand</span></div>
+      <div><span class="f">modal_app.py</span> <span class="comment">— Webhook, ACK, Dedupe, Deploy-Konfiguration</span></div>
+      <div><span class="f">rulebook.json</span> <span class="comment">— von ace/train.py geschrieben, von predict.py gelesen</span></div>
+      <div><span class="f">predict_log.jsonl</span> <span class="comment">— lokales Prediction-Log, eine Zeile pro Call</span></div>
+      <div>&nbsp;</div>
+      <div><span class="dir">ace/</span></div>
+      <div><span class="indent">├─</span> <span class="f">train.py</span> <span class="comment">— Trainings-CLI, Epochen-Loop, Accept/Reject-Gate</span></div>
+      <div><span class="indent">├─</span> <span class="f">reflector.py</span> <span class="comment">— 1 Bullet-Vorschlag pro Epoche</span></div>
+      <div><span class="indent">├─</span> <span class="f">curator.py</span> <span class="comment">— Merge, Dedup, Größen-Cap</span></div>
+      <div><span class="indent">└─</span> <span class="f">store.py</span> <span class="comment">— Bullet-Schema, Load/Save/Render</span></div>
+      <div>&nbsp;</div>
+      <div><span class="dir">data_provider/</span></div>
+      <div><span class="indent">├─</span> <span class="f">fmp.py</span> · <span class="f">yfinance.py</span> · <span class="f">sec_edgar.py</span></div>
+      <div><span class="indent">└─</span> <span class="comment">*_cache.json — je Quelle ein Disk-Cache</span></div>
+      <div>&nbsp;</div>
+      <div><span class="dir">examples/</span> <span class="comment">— Backtest-Notebook, Scoring-Reproduktion, Archiv-Loader</span></div>
+    </div>
+  </section>
+
+  <section id="erd">
+    <h2><span class="n">07</span> Datenmodell (ER-Diagramm)</h2>
+    <p class="section-desc">Die tatsächlichen Datenstrukturen im Code — <code>Prediction</code>, <code>Bullet</code>, <code>MissRecord</code> und die Scored-Outcome-Frames aus <code>examples.scoring</code> — nicht abstrakt, sondern 1:1 aus den Klassen/Dataclasses.</p>
+    <div class="diagram-panel">
+      <pre class="mermaid">
+erDiagram
+    EVENT ||--|{ SCORED_OUTCOME : "gescored als (Event × Ticker)"
+    SCORED_OUTCOME ||--o| PREDICTION : bekommt
+    PREDICTION ||--|{ DRAW : "gemittelt aus"
+    SCORED_OUTCOME ||--o| MISS_RECORD : "bei großem Fehler wird zu"
+    EPOCH ||--o{ MISS_RECORD : diagnostiziert
+    EPOCH ||--o| BULLET : "akzeptiert höchstens 1"
+    RULEBOOK ||--o{ BULLET : enthält
+    SUBMISSION ||--o{ PREDICTION : "produziert live"
+    RULEBOOK ||--|| SUBMISSION : "geladen von (nur Frankfurt-MC)"
+
+    EVENT {
+        string event_id PK
+        string event_type
+        datetime knowledge_cutoff
+        string quarter
+    }
+    SCORED_OUTCOME {
+        string event_id FK
+        string identifier_value PK
+        float car1
+        float surprise
+        float y "realized percentile"
+    }
+    PREDICTION {
+        float predicted_percentile
+        string rationale "nie submitted, nur fürs Training"
+    }
+    DRAW {
+        int draw_index PK
+        float predicted_percentile
+    }
+    MISS_RECORD {
+        float predicted_percentile
+        float actual_percentile
+        float abs_error
+    }
+    EPOCH {
+        int number PK
+        float candidate_score
+        bool accepted
+    }
+    BULLET {
+        string id PK
+        string category
+        string text
+        int created_epoch FK
+    }
+    RULEBOOK {
+        string path "rulebook.json"
+    }
+    SUBMISSION {
+        string public_name PK
+        string model
+        string webhook_url
+    }
+      </pre>
+    </div>
+    <p class="diagram-caption">SCORED_OUTCOME → MISS_RECORD ist keine feste Relation, sondern ein Filter: nur die Worst-N pro Epoche werden zu Miss Records. RULEBOOK↔SUBMISSION ist aktuell 1:1, weil nur Frankfurt-MC dynamisch lädt — Frankfurt-02 hat den Rulebook-Text statisch eingefroren im Prompt.</p>
+  </section>
+
+  <section id="status">
+    <h2><span class="n">08</span> Offene Punkte</h2>
+    <ul class="status-list">
+      <li>
+        <span class="mark pending">◐</span>
+        <span><b>Frankfurt-MC braucht ein Redeploy.</b> SEC-Filings, Live-Ensembling, der DeepSeek-Timeout-Fix und der FMP-Rate-Limit-Fix sind alle nach dem letzten <code>modal deploy</code> entstanden.</span>
+      </li>
+      <li>
+        <span class="mark gap">⚠</span>
+        <span><b>Curator dedupliziert nur innerhalb derselben Kategorie.</b> Der Reflector erfindet Kategorienamen frei — inhaltlich überlappende oder sogar widersprüchliche Bullets unter verschiedenen Namen werden nicht erkannt (bestätigt: Bullet #6 vs. #7 im aktuellen Rulebook).</span>
+      </li>
+      <li>
+        <span class="mark pending">◐</span>
+        <span><b>Modell-Effekt vs. Rulebook-Effekt ist konfundiert.</b> Frankfurt-02 (Kimi) und Frankfurt-MC (DeepSeek) unterscheiden sich in vier Variablen gleichzeitig — ein kontrollierter Backtest auf demselben Sample würde das trennen.</span>
+      </li>
+      <li>
+        <span class="mark gap">⚠</span>
+        <span><b>Rulebook wächst ohne periodisches Aufräumen.</b> 8 Bullets, mind. 1 bestätigter Widerspruch, 2 Redundanzen — bei fast 1 neuem Bullet pro Epoche und einem Cap von 25 (<code>ace/curator.py</code>) ist das in wenigen weiteren Läufen erreicht. Fehlt: ein Konsolidierungs- oder Ablations-Pruning-Pass.</span>
+      </li>
+    </ul>
+  </section>
+
+  <footer>
+    Generiert als persönliche Referenz-Übersicht · basiert auf dem Code-Stand dieser Session · starter-modal / Explaining Markets
+  </footer>
+</main>

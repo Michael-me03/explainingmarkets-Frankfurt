@@ -38,12 +38,23 @@ parameter and rejects every delivery with 422.
 
 import modal
 
-app = modal.App("explaining-markets-starter")
+app = modal.App("explaining-markets-deepseek-mc2")
 
 image = (
     modal.Image.debian_slim()
-    .pip_install("fastapi[standard]", "httpx", "openai", "pydantic")
-    .add_local_python_source("explaining_markets", "predict")
+    .pip_install(
+        "fastapi[standard]", "httpx", "openai", "pydantic",
+        # data_provider's live-available signals (yfinance market trend/analyst
+        # targets, FMP context) need these -- predict.py imports data_provider
+        # unconditionally at module load, so a deploy without them fails at
+        # import time, not at call time.
+        "requests", "numpy", "yfinance",
+    )
+    .add_local_python_source("explaining_markets", "predict", "data_provider", "ace")
+    # rulebook.json is data, not Python source -- add_local_python_source won't
+    # carry it. copy=False (the default) means a redeploy always picks up
+    # whatever ace/train.py most recently wrote, without a full image rebuild.
+    .add_local_file("rulebook.json", "/root/rulebook.json")
 )
 
 # Distributed key-value store for idempotency, keyed on the Webhook-Id header.
@@ -56,7 +67,7 @@ image = (
 #
 # Marking an event done up front would be the bug: a failed prediction would
 # look handled. This Dict persists across redeploys, so "done" is durable.
-seen_webhooks = modal.Dict.from_name("em-webhook-dedupe", create_if_missing=True)
+seen_webhooks = modal.Dict.from_name("em-webhook-dedupe-deepseek-mc2", create_if_missing=True)
 
 # Credentials are read from your local .env at deploy time (see .env.example).
 # Prefer Modal's secret store instead? See docs/advanced.md.
@@ -128,7 +139,7 @@ def predict_and_submit(event: dict, webhook_id: str | None = None):
 
 
 @app.function(image=image, secrets=secrets)
-@modal.asgi_app(label="explaining-markets")
+@modal.asgi_app(label="explaining-markets-deepseek-mc2")
 def web():
     from fastapi import FastAPI, Request, Response
 
