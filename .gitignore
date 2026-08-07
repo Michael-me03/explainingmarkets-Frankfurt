@@ -4,6 +4,10 @@
 # Local-only dev/maintenance scripts
 scripts/
 
+# Local logs and fetched calendar snapshots -- regenerable, not source
+logs/
+data/
+
 # Python
 __pycache__/
 *.py[cod]

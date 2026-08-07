@@ -1,0 +1,32 @@
+# Secrets — never commit
+.env
+
+# Downloaded historical archive — pulled from the API, can be large.
+# The folder is kept (via .gitkeep); its contents are never committed.
+data/archive/*
+!data/archive/.gitkeep
+
+# Notebooks
+.ipynb_checkpoints/
+*/.ipynb_checkpoints/*
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+
+# Virtual envs / tooling (uv.lock is committed on purpose)
+.venv/
+venv/
+.uv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
