@@ -2,6 +2,7 @@ import json
 import os
 import threading
 import time
+from datetime import datetime
 
 import requests
 from dotenv import load_dotenv
@@ -96,6 +97,60 @@ def get_analyst_estimates(ticker):
         }
     )
 """
+
+
+def _as_of_date(value) -> str | None:
+    """Reduce an `as_of` (datetime or ISO-8601) to a 'YYYY-MM-DD' cutoff string."""
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value.strftime("%Y-%m-%d")
+    return str(value)[:10]
+
+
+def get_earnings_surprise_summary(ticker, *, as_of=None) -> str | None:
+    """Actual vs. consensus EPS/revenue for the ticker's most recent reported quarter.
+
+    Unlike `/analyst-estimates` (period=quarter) and `/earnings-surprises-bulk`,
+    both of which are paywalled on FMP's free plan, the plain `/earnings`
+    endpoint returns `epsEstimated`/`epsActual`/`revenueEstimated`/`revenueActual`
+    per quarter and is available on the free tier -- capped at `limit<=5`
+    there, which is plenty since only the latest reported quarter is used.
+
+    `as_of` bounds the result to quarters reported on or before that day, same
+    point-in-time-safety convention as `sec_edgar.get_insider_activity_summary`
+    -- so a backtest never sees a quarter that hadn't reported yet. Rows with
+    `epsActual`/`revenueActual` still null (the report hasn't happened, or FMP
+    hasn't ingested it yet) are skipped in favor of the latest one that has
+    both. Always returns `None` on any failure rather than raising.
+    """
+    try:
+        cutoff = _as_of_date(as_of)
+        rows = fmp_get("earnings", {"symbol": ticker, "limit": 5})
+        candidates = [
+            r for r in rows
+            if (cutoff is None or r.get("date", "") <= cutoff)
+            and r.get("epsActual") is not None
+        ]
+        if not candidates:
+            return None
+        row = max(candidates, key=lambda r: r["date"])
+
+        parts = []
+        eps_a, eps_e = row.get("epsActual"), row.get("epsEstimated")
+        if eps_a is not None and eps_e:
+            pct = (eps_a - eps_e) / abs(eps_e) * 100
+            parts.append(f"EPS {eps_a:.2f} actual vs {eps_e:.2f} est ({pct:+.1f}% surprise)")
+        rev_a, rev_e = row.get("revenueActual"), row.get("revenueEstimated")
+        if rev_a is not None and rev_e:
+            pct = (rev_a - rev_e) / abs(rev_e) * 100
+            parts.append(f"Revenue ${rev_a/1e9:.2f}B actual vs ${rev_e/1e9:.2f}B est ({pct:+.1f}% surprise)")
+        if not parts:
+            return None
+        return f"Quarter reported {row['date']} -- " + "; ".join(parts) + "."
+    except Exception as e:
+        print(f"[FMP] earnings surprise unavailable for {ticker}: {e}")
+        return None
 
 
 _PROFILE_CACHE_PATH = Path(__file__).resolve().parent / "profile_cache.json"

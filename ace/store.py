@@ -10,6 +10,7 @@ heavier dependencies live.
 from __future__ import annotations
 
 import json
+import textwrap
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
@@ -54,5 +55,10 @@ def render(bullets: list[Bullet]) -> str:
     """
     if not bullets:
         return ""
-    lines = "\n".join(f"- {b.text}" for b in bullets)
+    # width=80, subsequent_indent="  " -- matches predict_02.py's hand-wrapped
+    # static rulebook text exactly, so the two prompts differ only in content.
+    lines = "\n".join(
+        textwrap.fill(f"- {b.category}: {b.text}", width=80, subsequent_indent="  ")
+        for b in bullets
+    )
     return f"Rulebook (learned heuristics from past events):\n{lines}\n"

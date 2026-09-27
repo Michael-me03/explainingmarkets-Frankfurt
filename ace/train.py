@@ -247,22 +247,28 @@ def train(
         print(f"\n=== Epoch {epoch}/{epochs} ===")
         train_results = _run_generator(train_rows, render(current_bullets))
 
-        misses = sorted(
-            (
-                MissRecord(
-                    event_id=row["event_id"],
-                    ticker=row["ticker"],
-                    event_type=row["event_type"],
-                    summary_text=row["summary_text"],
-                    predicted_percentile=pred.predicted_percentile,
-                    rationale=pred.rationale,
-                    actual_percentile=row["y"],
-                )
-                for row, pred in train_results
-            ),
-            key=lambda m: m.abs_error,
+        # Sort the raw (row, pred) pairs first and only fetch SEC/insider context
+        # for the worst_n slice actually shown to the Reflector -- doing it for
+        # all ~400 train_results would multiply this epoch's EDGAR calls ~20x
+        # for rows that never reach reflect().
+        worst_pairs = sorted(
+            train_results,
+            key=lambda item: abs(item[1].predicted_percentile - item[0]["y"]),
             reverse=True,
         )[:worst_n]
+        misses = [
+            MissRecord(
+                event_id=row["event_id"],
+                ticker=row["ticker"],
+                event_type=row["event_type"],
+                summary_text=row["summary_text"],
+                predicted_percentile=pred.predicted_percentile,
+                rationale=pred.rationale,
+                actual_percentile=row["y"],
+                sec_context=predict._sec_context_text(row["ticker"], row["as_of"]),
+            )
+            for row, pred in worst_pairs
+        ]
 
         proposed = reflect(misses, epoch, current_bullets)
         print(f"  reflector proposed {len(proposed)} bullet(s)")

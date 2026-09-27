@@ -14,6 +14,23 @@ submission's predicted percentiles explain, over and above the naive
 earnings-surprise benchmark (the same sample refit on the surprise alone;
 ``delta_r_squared`` is the difference between the two R^2 values).
 
+Two properties of this criterion are worth knowing before reading a
+leaderboard, because both follow from the identity ``delta_r_squared ==
+beta1**2 * s11_2 / s_yy`` (``s11_2`` = the prediction's residual variance after
+projecting out the surprise):
+
+* **The score is invariant to a uniform affine remap of your predictions.**
+  ``beta1`` enters squared, so replacing every prediction ``p`` with ``1 - p``
+  — or rescaling them all toward the middle — leaves the multiple R^2, the
+  delta and the ranking bit-for-bit identical. This measures explanatory power,
+  not calibration; neither the direction nor the spread of your numbers is
+  scored, only how much of the realized ranking they track.
+* **Constant predictions earn nothing.** If every prediction is the same value
+  the regressor has no variance (see :data:`DEGENERATE_SD`), its coefficient is
+  unidentified, and the fit collapses to the surprise-only benchmark with
+  ``beta1 = 0`` and a ``delta_r_squared`` of exactly ``0``. The submission is
+  still ranked, at the bottom.
+
 **Contest scoring — the imputed family (Official Rules §5).** For the contest,
 every submission is evaluated on the same common set of valid scored events
 (the "Scored Events"). First the arithmetic mean of the submission's timely,
@@ -151,6 +168,25 @@ def add_percentiles(frame: pd.DataFrame) -> pd.DataFrame:
 
 # ----- OLS (verbatim ports of the production scorer) ------------------------
 
+# A regressor counts as having NO spread once its standard deviation falls below
+# this, in the regressor's own units. Predictions and percentile-ranked
+# surprises both live on [0, 1], so it reads as "must vary by at least one part
+# in a million".
+#
+# An exact ``== 0.0`` check is not enough. A submission answering the same
+# constant on every event has zero true variance, but the computed sum of
+# squared deviations only lands on exactly 0.0 when that constant is a dyadic
+# rational: 0.5 (= 2**-1) is exactly representable and gives 0.0, while 0.65
+# leaves ~3e-31 of rounding residue. Dividing by that residue yields a
+# coefficient of ~1e15 and a negative incremental R^2, which is impossible for
+# a nested fit. Both are the same behaviour and are handled the same way.
+DEGENERATE_SD = 1e-6
+
+
+def no_spread(sum_sq_dev: float, n: int) -> bool:
+    """Is this regressor's spread indistinguishable from none? See ``DEGENERATE_SD``."""
+    return sum_sq_dev <= n * DEGENERATE_SD**2
+
 
 @dataclass(frozen=True)
 class OLSFit:
@@ -186,8 +222,8 @@ def ols_fit(points: list[tuple[float, float]]) -> OLSFit | None:
     s_xx = sum((p[0] - mean_x) ** 2 for p in points)
     s_yy = sum((p[1] - mean_y) ** 2 for p in points)
     s_xy = sum((p[0] - mean_x) * (p[1] - mean_y) for p in points)
-    if s_xx == 0.0:
-        # No spread in predictions — slope and explained variance undefined.
+    if no_spread(s_xx, n):
+        # No spread in x — slope and explained variance undefined.
         return None
     beta = s_xy / s_xx
     alpha = mean_y - beta * mean_x
@@ -206,10 +242,19 @@ def ols_fit2(points: list[tuple[float, float, float]]) -> OLSFit | None:
     Solves the centered 2x2 normal equations in closed form (Cramer's rule).
     ``beta`` carries beta1 (the prediction coefficient), ``beta_surprise``
     carries beta2, ``r_squared`` is the multiple R^2. Returns ``None`` with
-    fewer than 3 points, or when the 2x2 system is singular — a regressor with
-    no spread, or perfect collinearity — in which case the submission is left
-    unranked (there is deliberately NO univariate fallback). Verbatim port of
-    the production scorer.
+    fewer than 3 points, when the SURPRISE regressor has no spread, or when the
+    two regressors are perfectly collinear — in which case the submission is
+    left unranked (there is deliberately NO univariate fallback on the
+    surprise).
+
+    A PREDICTION regressor with no spread — a submission answering the same
+    constant on every event — is handled differently. Its coefficient is
+    unidentified but its true contribution is nil, so the correct nested model
+    in that limit is the surprise-only fit with ``beta1`` constrained to 0: a
+    constant predictor is absorbed into the intercept and explains nothing.
+    That is what comes back, giving ``delta_r_squared == 0.0`` exactly. Such a
+    submission stays ranked — at the bottom, having added nothing — rather than
+    disappearing from the board. Verbatim port of the production scorer.
     """
     n = len(points)
     if n < 3:
@@ -223,6 +268,24 @@ def ols_fit2(points: list[tuple[float, float, float]]) -> OLSFit | None:
     s1y = sum((p[0] - mean_x1) * (p[2] - mean_y) for p in points)
     s2y = sum((p[1] - mean_x2) * (p[2] - mean_y) for p in points)
     s_yy = sum((p[2] - mean_y) ** 2 for p in points)
+    if no_spread(s22, n):
+        # The surprise carries no cross-section — nothing to benchmark against.
+        return None
+    if no_spread(s11, n):
+        # Constant predictions: return the beta1 = 0 model, computed exactly as
+        # `ols_fit` would on the same (x2, y) sample so the delta against that
+        # benchmark is bit-for-bit 0.0.
+        beta2 = s2y / s22
+        alpha = mean_y - beta2 * mean_x2
+        ss_res = sum((p[2] - (alpha + beta2 * p[1])) ** 2 for p in points)
+        return OLSFit(
+            n=n,
+            alpha=alpha,
+            beta=0.0,
+            r_squared=0.0 if s_yy == 0.0 else 1.0 - ss_res / s_yy,
+            mse=ss_res / n,
+            beta_surprise=beta2,
+        )
     det = s11 * s22 - s12 * s12
     if det == 0.0:
         return None

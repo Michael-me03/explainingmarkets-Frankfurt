@@ -7,7 +7,7 @@ disclosure fetch so the test is fully offline.
 
 from __future__ import annotations
 
-import predict_kimi as predict_module
+import predict as predict_module
 
 
 SAMPLE_EVENT = {
@@ -34,8 +34,12 @@ class _FakeResponse:
 
 
 def test_predict_fallback_shape(monkeypatch) -> None:
-    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("ZAI_API_KEY", raising=False)
     monkeypatch.setattr(predict_module.httpx, "get", lambda *a, **k: _FakeResponse())
+    # These signals are fetched unconditionally (independent of the LLM key),
+    # so they need stubbing too to keep this test offline.
+    monkeypatch.setattr(predict_module, "get_insider_activity_summary", lambda *a, **k: "")
+    monkeypatch.setattr(predict_module, "get_earnings_surprise_summary", lambda *a, **k: "")
 
     preds = predict_module.predict(SAMPLE_EVENT)
 

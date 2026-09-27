@@ -1,25 +1,11 @@
-"""Frankfurt-2.2 live predictor.
+"""Frankfurt-MC-02 / Frankfurt-2.2 live predictor.
 
-GLM-5.2 (z.ai) with a dynamic rulebook loaded from `rulebook.json` (produced
-offline by `ace/train.py`), ensembled over `N_ENSEMBLE_DRAWS` concurrent
-draws, plus an SEC insider-activity (Form 4) signal and a live EPS
-actual-vs-consensus surprise from `data_provider.finnhub`. The `rationale`
-field in the tool response is kept for `ace/reflector.py`'s miss diagnostics
-— it is never submitted to the competition.
-
-The Finnhub surprise signal was validated via an offline A/B in
-01_historical_archive.ipynb Section 6 (against a pre-Finnhub snapshot of this
-file) before being promoted into this file. FMP's equivalent endpoint
-(`data_provider.fmp.get_earnings_surprise_summary`) was tried first but only
-serves a fixed whitelist of ~15 blue-chip tickers on the free plan (confirmed
-live: BLK/DPZ/FBK/LEVI all 402'd) -- Finnhub's `/stock/earnings` has no such
-restriction.
-
-Switched from DeepSeek to GLM-5.2: the leaderboard's own "GLM-5.2 — Summary"
-baseline outranks the DeepSeek/Kimi baselines by a wide margin (see
-docs.z.ai/guides/llm/glm-5.2's model card), and `reasoning_effort`/`temperature`
-/`top_p` below are that baseline's own documented, leaderboard-validated
-settings -- not a guess.
+DeepSeek (`deepseek-v4-flash`) with a dynamic rulebook loaded from
+`rulebook.json` (produced offline by `ace/train.py`), ensembled over
+`N_ENSEMBLE_DRAWS` concurrent draws, plus an SEC insider-activity (Form 4)
+signal. The `rationale` field in the tool response is kept for
+`ace/reflector.py`'s miss diagnostics — it is never submitted to the
+competition.
 """
 
 from __future__ import annotations
@@ -35,12 +21,10 @@ import httpx
 from openai import OpenAI
 from pydantic import BaseModel, Field
 from ace.store import load_rulebook, render as render_rulebook
-from data_provider.finnhub import get_earnings_surprise_summary
-from data_provider.sec_edgar import get_insider_activity_summary
 
 
-_zai: OpenAI | None = None  # lazy: importing this file must not require a key
-_zai_warned = False         # one-shot warning when no key is configured
+_deepseek: OpenAI | None = None  # lazy: importing this file must not require a key
+_deepseek_warned = False         # one-shot warning when no key is configured
 _prompt_log_count = 0            # print every PROMPT_LOG_EVERY-th system/user prompt, for debugging
 _prompt_log_lock = threading.Lock()
 # Override per-run with `PROMPT_LOG_EVERY=25 uv run ...` -- defaults high so a
@@ -66,11 +50,12 @@ LLM_MAX_RETRIES = 1
 # 270s budget math above.
 N_ENSEMBLE_DRAWS = 3
 
-# z.ai is OpenAI-compatible; base_url confirmed against docs.z.ai/guides/llm/glm-5.2's
-# "OpenAI Python SDK" quick-start tab (the generic https://api.z.ai/api alone
-# is NOT enough -- the /paas/v4/ path is required for /chat/completions to resolve).
-ZAI_BASE_URL = "https://api.z.ai/api/paas/v4/"
-ZAI_MODEL = "glm-5.2"
+# DeepSeek is OpenAI-compatible; only the base_url + model differ.
+# deepseek-v4-flash is the cheap/fast tier; deepseek-v4-pro is the stronger,
+# pricier reasoning tier. Swap the active line to A/B test.
+DEEPSEEK_BASE_URL = "https://api.deepseek.com/v1"
+#DEEPSEEK_MODEL = "deepseek-v4-flash"
+DEEPSEEK_MODEL = "deepseek-v4-flash"
 
 # Rulebook produced offline by `ace/train.py` (Generator/Reflector/Curator loop).
 # Loaded once per process -- it's only ever written between deploys, never at
@@ -154,25 +139,12 @@ def _ensembled_percentile(
 ) -> float:
     """Average `N_ENSEMBLE_DRAWS` concurrent `_ask_llm` draws into one percentile.
 
-    Each draw is an independent GLM-5.2 call at temperature=1 -- averaging
+    Each draw is an independent DeepSeek call at temperature=1 -- averaging
     smooths out per-call sampling noise, the same fix already applied to the
     ace/train.py validation gate, now applied to what actually gets submitted.
     """
-    # Fetched once and shared across all draws -- ticker/as_of are identical
-    # for every draw of the same event, so fetching per-draw (as this used to)
-    # just tripled the SEC EDGAR/Finnhub requests for no benefit.
-    insider_summary = get_insider_activity_summary(ticker, as_of=as_of)
-    surprise_signal = get_earnings_surprise_summary(ticker, as_of=as_of)
-
     def _one_draw(_):
-        return _ask_llm(
-            summary=summary,
-            ticker=ticker,
-            event_type=event_type,
-            as_of=as_of,
-            insider_summary=insider_summary,
-            surprise_signal=surprise_signal,
-        ).predicted_percentile
+        return _ask_llm(summary=summary, ticker=ticker, event_type=event_type, as_of=as_of).predicted_percentile
 
     with ThreadPoolExecutor(max_workers=N_ENSEMBLE_DRAWS) as pool:
         draws = list(pool.map(_one_draw, range(N_ENSEMBLE_DRAWS)))
@@ -192,7 +164,7 @@ class Prediction(BaseModel):
     """Structured response shape for the LLM call.
 
     The `Field(ge=0, le=1)` constraint is enforced by us via Pydantic after
-    parsing the tool call arguments — GLM-5.2's tool-calling doesn't guarantee
+    parsing the tool call arguments — DeepSeek's tool-calling doesn't guarantee
     numeric bounds the way a JSON Schema `minimum`/`maximum` might suggest,
     so we validate on our side rather than trust it blindly.
 
@@ -227,7 +199,7 @@ Calibration discipline:
 You must respond by calling the submit_prediction tool — do not answer in plain text.
 """
 
-# Tool definition used to force GLM-5.2 to return a structured percentile via
+# Tool definition used to force DeepSeek to return a structured percentile via
 # tool_calls, instead of relying on prose or loose JSON-mode output.
 _PREDICTION_TOOL = {
     "type": "function",
@@ -267,11 +239,11 @@ def _ask_llm(
     ticker: str,
     event_type: str,
     as_of: str | None = None,
+    peer_context: str | None = None,
     surprise_signal: str | None = None,
     rulebook_text: str | None = None,
-    insider_summary: str | None = None,
 ) -> Prediction:
-    """Ask the configured GLM-5.2 model for a calibrated percentile via a forced tool call.
+    """Ask the configured DeepSeek model for a calibrated percentile via a forced tool call.
 
     `as_of` is the event's `knowledge_cutoff` (ISO-8601 string) — it bounds the
     yfinance price window so historical backtests never see price data from
@@ -279,18 +251,23 @@ def _ask_llm(
     real `knowledge_cutoff` too; omitting it just defaults to "now", which is
     equivalent since the event hasn't happened yet.
 
-    `surprise_signal` is a formatted EPS actual-vs-consensus string for the
-    ticker's most recently reported quarter, from `data_provider.finnhub`
-    (see that module's docstring for why Finnhub over FMP: FMP's equivalent
-    endpoint only serves a fixed whitelist of ~15 blue-chip tickers on the
-    free plan). Validated via the offline A/B in 01_historical_archive.ipynb
-    Section 6 (against a pre-Finnhub snapshot of this file) before being
-    promoted into this file. Same caller-fetches-once-and-shares pattern as
-    `insider_summary`: `_ensembled_percentile` fetches it once per event and
-    passes it to all `N_ENSEMBLE_DRAWS` draws; direct callers (`ace/train.py`,
-    notebooks) that omit it get it fetched here instead. Unrelated to the
-    archive's own precomputed `metrics.earnings_surprise.surprise` field
-    (backtest-only, never live).
+    `peer_context` is optional: the mean next-day abnormal return of same-sector
+    events that reported strictly earlier in the same quarter, as a formatted
+    string (or a "no peers yet" message). Only the notebook backtest currently
+    computes and passes this — the live `predict()` path doesn't have cheap
+    access to the rest of the quarter's sibling events, so it defaults to None.
+
+    `surprise_signal` is optional and EXPERIMENTAL / BACKTEST-ONLY: a formatted
+    quarter-to-date percentile rank of this event's EPS/revenue surprise vs.
+    analyst consensus. The archive has this pre-computed (`metrics.earnings_
+    surprise.surprise`) for backtesting, but the live webhook event does NOT
+    include it -- there's no consensus-estimate source wired up yet (FMP's
+    analyst-estimates endpoint is paywalled on the free tier). So this stays
+    None in the live `predict()` path until that's solved; it exists purely so
+    the notebook backtest can measure whether this signal is worth the effort
+    of finding a live consensus source at all -- and so `ace/train.py` can feed
+    it to the Reflector, which can only turn it into a *qualitative* rulebook
+    heuristic (no raw numeric rank reaches the live model).
 
     `rulebook_text` overrides the rulebook block normally loaded from
     `rulebook.json` -- used by `ace/train.py` to test a candidate rulebook
@@ -298,30 +275,23 @@ def _ask_llm(
     deploy always runs whatever is currently checked in (no online adaptation;
     the 5-minute webhook deadline doesn't leave room for a live Reflector pass).
 
-    `insider_summary` lets a caller pre-fetch the SEC EDGAR Form 4 summary once
-    and share it across calls -- `_ensembled_percentile` does this since all
-    `N_ENSEMBLE_DRAWS` draws for one event share the same ticker/as_of, and
-    fetching per-draw would just repeat the same EDGAR requests. Callers that
-    invoke `_ask_llm` directly for a single draw (`ace/train.py`, the notebook
-    backtests) can omit it and this fetches it itself, same as before.
-
     Returns the model's `Prediction` (percentile + optional rationale). Falls
-    back to a 0.5 placeholder if no `ZAI_API_KEY` is configured, the model
+    back to a 0.5 placeholder if no `DEEPSEEK_API_KEY` is configured, the model
     doesn't return the tool call, or the arguments fail validation.
     """
-    global _zai, _zai_warned
-    if not os.environ.get("ZAI_API_KEY"):
-        if not _zai_warned:
+    global _deepseek, _deepseek_warned
+    if not os.environ.get("DEEPSEEK_API_KEY"):
+        if not _deepseek_warned:
             print(
-                "[WARN] ZAI_API_KEY not set — submitting 0.5 placeholder. "
+                "[WARN] DEEPSEEK_API_KEY not set — submitting 0.5 placeholder. "
                 "Set the key (or edit predict.py) for real predictions."
             )
-            _zai_warned = True
+            _deepseek_warned = True
         return Prediction(predicted_percentile=0.5)
-    if _zai is None:
-        _zai = OpenAI(
-            api_key=os.environ["ZAI_API_KEY"],
-            base_url=ZAI_BASE_URL,
+    if _deepseek is None:
+        _deepseek = OpenAI(
+            api_key=os.environ["DEEPSEEK_API_KEY"],
+            base_url=DEEPSEEK_BASE_URL,
             timeout=LLM_TIMEOUT_SECONDS,
             max_retries=LLM_MAX_RETRIES,
         )
@@ -332,27 +302,12 @@ def _ask_llm(
     summary_text = summary_text[:8000]
 
 
-    rulebook_section = _rulebook_block(rulebook_text)
-
-    # Insider (Form 4) activity in the 90 days before the event -- presence-only
-    # signal. Fetched by the caller when shared across ensemble draws; fetched
-    # here otherwise (see the `insider_summary` docstring above).
-    if insider_summary is None:
-        insider_summary = get_insider_activity_summary(ticker, as_of=as_of)
-    insider_text = insider_summary or "Insider Form 4 activity unavailable."
-
-    # EPS surprise (Finnhub, most recently reported quarter) -- same
-    # caller-fetches-once-and-shares pattern as insider_summary above.
-    if surprise_signal is None:
-        surprise_signal = get_earnings_surprise_summary(ticker, as_of=as_of)
-    surprise_text = surprise_signal or "Earnings surprise data unavailable."
 
     user_prompt = (
         f"Event type: {event_type}\n"
         f"Ticker: {ticker}\n\n"
         f"Event summary:\n{summary_text}\n\n"
-        f"Insider activity (Form 4, 90 days pre-event):\n{insider_text}\n\n"
-        f"EPS surprise (most recent reported quarter, may predate this event):\n{surprise_text}\n\n"
+        #f"Insider activity (Form 4, 90 days pre-event):\n{insider_text}\n\n"
         "Weigh, in roughly this order:\n"
         "  1. Quantitative surprise vs expectations — revenue, EPS, segment metrics.\n"
         "  2. Guidance / outlook — raises, holds, cuts vs the prior trajectory.\n"
@@ -363,45 +318,27 @@ def _ask_llm(
         "Call the submit_prediction tool with your answer."
     )
 
-    system_prompt = SYSTEM_PROMPT + (f"\n{rulebook_section}" if rulebook_section else "")
+    #system_prompt = SYSTEM_PROMPT + (f"\n{rulebook_section}" if rulebook_section else "")
 
     global _prompt_log_count
     with _prompt_log_lock:
         _prompt_log_count += 1
         call_number = _prompt_log_count
-    if (call_number - 1) % PROMPT_LOG_EVERY == 0:
-        print(f"\n{'='*20} predict.py -- SYSTEM PROMPT (call #{call_number}) {'='*20}\n{system_prompt}")
-        print(f"{'='*20} predict.py -- USER PROMPT (call #{call_number}, {ticker}) {'='*20}\n{user_prompt}\n")
 
     try:
-        resp = _zai.chat.completions.create(
-            model=ZAI_MODEL,
-            # temperature/top_p/reasoning_effort are the "GLM-5.2 — Summary"
-            # leaderboard baseline's own documented settings (its model card:
-            # temperature=1.0, top_p=0.95, reasoning effort "high"), not the
-            # generic quick-start defaults (which use reasoning_effort="max").
-            temperature=1.0,
-            top_p=0.95,
-            # `thinking` and `reasoning_effort` aren't real OpenAI-SDK fields --
-            # the plain `openai` client validates kwargs strictly and rejects
-            # unknown ones (confirmed: TypeError on `thinking` directly).
-            # `extra_body` is the SDK's documented escape hatch for vendor-specific
-            # JSON fields, passed through unvalidated.
-            extra_body={"thinking": {"type": "enabled"}, "reasoning_effort": "high"},
-            # Reasoning-effort "high" with no cap can run long -- bound it so a
-            # single call can't blow the 270s live webhook budget (see timeout
-            # comment above) or run away on cost. 2048 is generous for a single
-            # percentile + short rationale.
-            max_tokens=2048,
+        resp = _deepseek.chat.completions.create(
+            model=DEEPSEEK_MODEL,
+            temperature=0.2,
             messages=[
-                 {"role": "system", "content": system_prompt},
+                 {"role": "system", "content": SYSTEM_PROMPT},
                 {"role": "user", "content": user_prompt},
             ],
             tools=[_PREDICTION_TOOL],
-            # "auto", not forced: z.ai's thinking mode is documented as behaving
-            # like DeepSeek's (see the DEEPSEEK_BASE_URL-era comment this replaced) --
-            # not independently confirmed to reject a forced tool_choice, but "auto"
-            # is the safe default that's already known to work everywhere.
+            # Must stay "auto": deepseek-v4-flash serves this call in "thinking mode"
+            # by default, and its API rejects a forced tool_choice outright (400:
+            # "Thinking mode does not support this tool_choice") -- confirmed by
+            # actually hitting the error while testing the ace/ training loop. Not
+            # an oversight carried over from predict_kimi.py; auto is required here.
             tool_choice="auto",
         )
     except Exception as e:
@@ -410,7 +347,7 @@ def _ask_llm(
         # catches it at the top level), but fatal for ace/train.py: one flaky
         # call among hundreds of concurrent Generator calls would crash the
         # entire training run, losing all progress since the last checkpoint.
-        print(f"[WARN] GLM-5.2 call failed for {ticker}: {e} -- submitting 0.5 placeholder.")
+        print(f"[WARN] DeepSeek call failed for {ticker}: {e} -- submitting 0.5 placeholder.")
         return Prediction(predicted_percentile=0.5)
 
     message = resp.choices[0].message

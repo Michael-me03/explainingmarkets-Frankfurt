@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ACE Framework — Architecture</title>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+<style>
+  :root {
+    --bg: #f6f8fa;
+    --card: #ffffff;
+    --border: #d0d7de;
+    --text: #24292f;
+    --muted: #57606a;
+    --blue-bg: #ddf4ff; --blue-fg: #0969da;
+    --green-bg: #dafbe1; --green-fg: #1a7f37;
+    --yellow-bg: #fff8c5; --yellow-fg: #9a6700;
+    --red-bg: #ffebe9; --red-fg: #cf222e;
+  }
+  * { box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    margin: 0;
+    padding: 28px;
+  }
+  .card {
+    max-width: 1180px;
+    margin: 0 auto;
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 28px 32px;
+    box-shadow: 0 1px 4px rgba(0,0,0,.06);
+  }
+  h1 { font-size: 23px; margin: 0 0 4px; }
+  .sub { color: var(--muted); font-size: 13px; margin-bottom: 22px; }
+  .legend { display: flex; flex-wrap: wrap; gap: 12px; margin: 4px 0 20px; }
+  .legend .chip {
+    padding: 4px 12px; border-radius: 999px; font-weight: 600; font-size: 12px;
+    border: 1px solid transparent;
+  }
+  .chip.offline { background: var(--blue-bg); color: var(--blue-fg); }
+  .chip.live    { background: var(--green-bg); color: var(--green-fg); }
+  .chip.data    { background: var(--yellow-bg); color: var(--yellow-fg); }
+  .chip.ab      { background: var(--red-bg); color: var(--red-fg); }
+  .mermaid { text-align: center; }
+  h2 { font-size: 15px; margin: 28px 0 10px; border-bottom: 1px solid var(--border); padding-bottom: 6px; }
+  table {
+    width: 100%; border-collapse: collapse; font-size: 12.5px; margin-top: 6px;
+  }
+  th, td { text-align: left; padding: 8px 10px; border: 1px solid var(--border); vertical-align: top; }
+  th { background: #f6f8fa; font-weight: 600; }
+  code { background: #f6f8fa; border: 1px solid var(--border); border-radius: 4px; padding: 1px 5px; font-size: 11.5px; }
+  .note {
+    margin-top: 22px; font-size: 12.5px; line-height: 1.65; color: var(--muted);
+    background: #f6f8fa; border-left: 3px solid var(--blue-fg); padding: 12px 16px;
+    border-radius: 0 8px 8px 0;
+  }
+</style>
+</head>
+<body>
+<div class="card">
+  <h1>ACE Framework — Architecture</h1>
+  <div class="sub">Offline Generator / Reflector / Curator loop &nbsp;·&nbsp; Live webhook prediction &nbsp;·&nbsp; Data providers &nbsp;·&nbsp; Offline A/B backtest</div>
+
+  <div class="legend">
+    <span class="chip offline">Offline training</span>
+    <span class="chip live">Live path</span>
+    <span class="chip data">Data providers</span>
+    <span class="chip ab">A/B backtest</span>
+  </div>
+
+  <pre class="mermaid">
+flowchart TB
+    subgraph REMOTE["REMOTE — MODAL (deployed app)"]
+        direction TB
+        MD["MANUAL — deploy to Modal"]
+        subgraph LIVE["LIVE PREDICTION (deployed)"]
+            direction TB
+            L1["Verified event webhook"] --> L2["Prediction engine<br/>summary-only"] --> L3["LLM reasoning<br/>with deployed rules"] --> L4["Submit prediction"]
+        end
+        L4 --> PL["Platform / Leaderboard"]
+        MD -.-> L3
+    end
+
+    subgraph LOCAL["LOCAL — workspace"]
+        direction TB
+        subgraph DATA["DATA SOURCES (local fetchers)"]
+            direction LR
+            D3["SEC Filings Provider"] ; D4["Historical Event Archive"]
+        end
+        subgraph ACE["ACE TESTING — automated loop"]
+            direction TB
+            T1["Sampled historical events"] --> T2["Generator — LLM predictions"] --> T3["Miss analysis"] --> T4["Reflector — propose rule updates"] --> T5["Curator — merge rule updates"] --> T6{"Validation gate<br/>held-out quarter"}
+            T6 -- "accept → persist" --> RB[("Learned Rules Store")]
+            T6 -- "reject → keep" --> T3
+            RB -. "next epoch" .-> T2
+        end
+        subgraph COMP["OFFLINE STRATEGY COMPARISON (manual)"]
+            direction TB
+            E1["Candidate strategies"] --> E2["Contest scoring<br/>delta R²"] --> E3[("Performance log")]
+        end
+        M1["MANUAL — edit learned rules"]
+        M2["MANUAL — run ACE training"]
+        M3["MANUAL — run strategy comparison"]
+        M4["MANUAL — commit to git"]
+    end
+
+    D4 --> T1
+    D3 -. "SEC signal" .-> E1
+    RB -. "deployed snapshot" .-> MD
+    RB --> E1
+  </pre>
+
+  <h2>Component overview</h2>
+  <table>
+    <thead>
+      <tr><th>Layer</th><th>What it is</th><th>Role</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><b>Offline learning loop</b></td><td>Training module</td>
+          <td>Generator → Reflector → Curator; validation gate on a held-out quarter; persists learned rules on accept.</td></tr>
+      <tr><td><b>Learned rules</b></td><td>Persistent rule store + loader</td>
+          <td>Persist rules; load / render / save.</td></tr>
+      <tr><td><b>Generator / Reflector / Curator</b></td><td>Prediction engine, miss analysis, merge</td>
+          <td>Scored predictions, miss analysis, proposed and merged rule updates.</td></tr>
+      <tr><td><b>Live path</b></td><td>Webhook handler + prediction engine</td>
+          <td>Webhook → prediction per focal asset → submit.</td></tr>
+      <tr><td><b>Data providers</b></td><td>SEC filings; fundamentals; market prices</td>
+          <td>SEC filings active in the strategy comparison; fundamentals/market prices not wired in.</td></tr>
+      <tr><td><b>Scoring / comparison</b></td><td>Contest scorer + offline comparison</td>
+          <td>Percentile ranking, delta R², logged over time.</td></tr>
+    </tbody>
+  </table>
+
+  <div class="note">
+    <b>Remote vs local:</b> the <b>Modal-deployed app (right)</b> handles live webhooks and submits
+    predictions to the platform; it runs a <b>summary-only</b> prediction engine using the <b>rules
+    snapshot taken at deploy time</b>. Everything on the left is local: the <b>automated ACE testing loop</b>
+    proposes and persists learned rules, the <b>manual strategy comparison</b> scores candidates offline,
+    and the <b>orange dashed boxes are manual steps</b> (edit rules, run training, run comparison, deploy, commit).
+    The SEC signal is currently active only in the offline strategy comparison.
+  </div>
+</div>
+
+<script>
+  mermaid.initialize({ startOnLoad: true, theme: "base", themeVariables: {
+    primaryColor: "#ddf4ff", primaryTextColor: "#0969da",
+    primaryBorderColor: "#0969da", lineColor: "#57606a",
+    secondaryColor: "#fff8c5", tertiaryColor: "#ffebe9"
+  }});
+</script>
+</body>
+</html>

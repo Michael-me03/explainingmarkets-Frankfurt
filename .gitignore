@@ -1,5 +1,7 @@
 # Secrets — never commit
 .env
+.env.*
+!.env.example
 
 # Local-only dev/maintenance scripts
 scripts/
@@ -8,6 +10,15 @@ scripts/
 logs/
 data/
 
+# Internal session handover notes -- dev-process notes, not part of the project
+docs/uebergabeprotokoll_*.md
+
+# Scratch caches/logs from ad-hoc backtesting and signal debugging -- regenerable
+backtest_cache_*.json
+validation_cache.json
+delta_r2_log.csv
+sec_filings_full_*.json
+
 # Python
 __pycache__/
 *.py[cod]
@@ -15,6 +26,9 @@ __pycache__/
 .eggs/
 build/
 dist/
+
+# Jupyter
+.ipynb_checkpoints/
 
 # Virtual envs / tooling
 .venv/

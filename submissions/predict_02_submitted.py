@@ -1,36 +1,40 @@
-"""★ THIS IS THE ONLY FILE YOU NEED TO EDIT. ★
+"""predict_02.py — the DeepSeek, static-rulebook variant used by validate.py.
 
 `predict(event)` is called once per competition event, after the webhook has
 already been verified for you. Return one prediction per focal asset. Everything
 else in this repo (webhook verification, dedupe, submission) is plumbing.
 
-The default implementation asks a Kimi (Moonshot AI) model for a calibrated
-percentile via a forced tool call. If `KIMI_API_KEY` is not set, it returns a
+The default implementation asks a DeepSeek model for a calibrated percentile
+via a forced tool call. If `DEEPSEEK_API_KEY` is not set, it returns a
 0.5 baseline so the full deploy → receive → submit round-trip still works
 without burning credits. Replace the body of `predict` with whatever strategy
 you like — the only contract is the return shape documented below.
 
-Backup of the Kimi-based predict.py used by the "Frankfurt-02" submission
-(explaining-markets-kimi-rulebook), saved here when predict.py was switched
-back to DeepSeek for the third submission. Frankfurt-02's live deployment
-already has this baked into its own image and is unaffected either way -- this
-file is just so the exact content isn't lost locally.
+Copy of predict_kimi.py with only the model call swapped to DeepSeek --
+static 3-bullet rulebook, single call per asset, no market cap/SEC/ensembling
+-- kept otherwise identical so validate.py can isolate the model variable
+(Kimi vs DeepSeek) from the rulebook/signals/ensembling variables that
+predict.py (Frankfurt-MC-02) also differs on.
 """
 
 from __future__ import annotations
 
 import json
 import os
+import threading
 
 import httpx
 from openai import OpenAI
 from pydantic import BaseModel, Field
 from data_provider.fmp import get_market_context
 from data_provider.yfinance import get_market_trend, get_analyst_expectations
+from data_provider.sec_edgar import get_recent_filings_summary
 
 
-_kimi: OpenAI | None = None  # lazy: importing this file must not require a key
-_kimi_warned = False         # one-shot warning when no key is configured
+_deepseek: OpenAI | None = None  # lazy: importing this file must not require a key
+_deepseek_warned = False         # one-shot warning when no key is configured
+_prompt_logged = False           # print the full system/user prompt once, for debugging
+_prompt_log_lock = threading.Lock()
 
 # Timeouts, sized against the 5-minute prediction window that opens when your
 # handler ACKs the webhook. Worst case is 15 + (120 x 2) + 15 = 270s, which
@@ -41,11 +45,10 @@ SUMMARY_TIMEOUT_SECONDS = 15.0
 LLM_TIMEOUT_SECONDS = 120.0
 LLM_MAX_RETRIES = 1
 
-# Kimi (Moonshot AI) is OpenAI-compatible; only the base_url + model differ.
-KIMI_BASE_URL = "https://api.moonshot.ai/v1"
-KIMI_MODEL = "kimi-k2.7-code"
-#KIMI_MODEL = "kimi-k3"
-#KIMI_MODEL = "kimi-k2.6"
+# DeepSeek is OpenAI-compatible; only the base_url + model differ.
+DEEPSEEK_BASE_URL = "https://api.deepseek.com/v1"
+DEEPSEEK_MODEL = "deepseek-v4-flash"
+#DEEPSEEK_MODEL = "deepseek-v4-pro"
 
 
 def predict(event: dict) -> list[dict]:
@@ -99,7 +102,7 @@ class Prediction(BaseModel):
     """Structured response shape for the LLM call.
 
     The `Field(ge=0, le=1)` constraint is enforced by us via Pydantic after
-    parsing the tool call arguments — Kimi's tool-calling doesn't guarantee
+    parsing the tool call arguments — DeepSeek's tool-calling doesn't guarantee
     numeric bounds the way a JSON Schema `minimum`/`maximum` might suggest,
     so we validate on our side rather than trust it blindly.
     """
@@ -153,7 +156,7 @@ Rulebook (learned heuristics from past events):
   neutral.
 """
 
-# Tool definition used to force Kimi to return a structured percentile via
+# Tool definition used to force DeepSeek to return a structured percentile via
 # tool_calls, instead of relying on prose or loose JSON-mode output.
 _PREDICTION_TOOL = {
     "type": "function",
@@ -188,7 +191,7 @@ def _ask_llm(
     peer_context: str | None = None,
     surprise_signal: str | None = None,
 ) -> float:
-    """Ask the configured Kimi model for a calibrated percentile via a forced tool call.
+    """Ask the configured DeepSeek model for a calibrated percentile via a forced tool call.
 
     `as_of` is the event's `knowledge_cutoff` (ISO-8601 string) — it bounds the
     yfinance price window so historical backtests never see price data from
@@ -213,22 +216,22 @@ def _ask_llm(
     of finding a live consensus source at all.
 
     Returns the model's `predicted_percentile`. Falls back to 0.5 if no
-    `KIMI_API_KEY` is configured, the model doesn't return the tool call, or
+    `DEEPSEEK_API_KEY` is configured, the model doesn't return the tool call, or
     the arguments fail validation.
     """
-    global _kimi, _kimi_warned
-    if not os.environ.get("KIMI_API_KEY"):
-        if not _kimi_warned:
+    global _deepseek, _deepseek_warned
+    if not os.environ.get("DEEPSEEK_API_KEY"):
+        if not _deepseek_warned:
             print(
-                "[WARN] KIMI_API_KEY not set — submitting 0.5 placeholder. "
-                "Set the key (or edit predict.py) for real predictions."
+                "[WARN] DEEPSEEK_API_KEY not set — submitting 0.5 placeholder. "
+                "Set the key (or edit predict_02.py) for real predictions."
             )
-            _kimi_warned = True
+            _deepseek_warned = True
         return 0.5
-    if _kimi is None:
-        _kimi = OpenAI(
-            api_key=os.environ["KIMI_API_KEY"],
-            base_url=KIMI_BASE_URL,
+    if _deepseek is None:
+        _deepseek = OpenAI(
+            api_key=os.environ["DEEPSEEK_API_KEY"],
+            base_url=DEEPSEEK_BASE_URL,
             timeout=LLM_TIMEOUT_SECONDS,
             max_retries=LLM_MAX_RETRIES,
         )
@@ -237,6 +240,15 @@ def _ask_llm(
     if not summary_text:
         summary_text = json.dumps(summary)
     summary_text = summary_text[:8000]
+
+    # Point-in-time-safe SEC filing signal -- same as predict_mc_02.py.
+    filings = get_recent_filings_summary(ticker, as_of=as_of)
+    filings_text = (
+        f"Recent SEC filings (as known at {as_of or 'now'}): {filings}"
+        if filings
+        else "No recent SEC filing information available."
+    )
+
     #fmp_context = get_market_context(ticker)
     # market_context_text = json.dumps(fmp_context) if fmp_context else "No market context available."
 
@@ -276,12 +288,6 @@ def _ask_llm(
         f"Event type: {event_type}\n"
         f"Ticker: {ticker}\n\n"
         f"Event summary:\n{summary_text}\n\n"
-        #f"Market context:\n{market_context_text}\n\n"
-        #f"Price history (last 90 trading days, volatility as a rough scale reference for how big a "
-        #f"typical move for this ticker is):\n{price_history_text}\n\n"
-        #f"Analyst price targets (current consensus, for general valuation context):\n{analyst_text}\n\n"
-        #f"{peer_section}"
-        #f"{surprise_section}"
         "Weigh, in roughly this order:\n"
         "  1. Quantitative surprise vs expectations — revenue, EPS, segment metrics.\n"
         "  2. Guidance / outlook — raises, holds, cuts vs the prior trajectory.\n"
@@ -298,23 +304,33 @@ def _ask_llm(
         "Call the submit_prediction tool with your answer."
     )
 
+    global _prompt_logged
+    if not _prompt_logged:
+        with _prompt_log_lock:
+            if not _prompt_logged:
+                _prompt_logged = True
+                print(f"\n{'='*20} predict_02.py -- SYSTEM PROMPT {'='*20}\n{SYSTEM_PROMPT}")
+                print(f"{'='*20} predict_02.py -- USER PROMPT ({ticker}) {'='*20}\n{user_prompt}\n")
+
     try:
-        resp = _kimi.chat.completions.create(
-            model=KIMI_MODEL,
-            reasoning_effort="low",
-            temperature=1,
+        resp = _deepseek.chat.completions.create(
+            model=DEEPSEEK_MODEL,
+            temperature=0.2,
             messages=[
                 {"role": "system", "content": SYSTEM_PROMPT},
                 {"role": "user", "content": user_prompt},
             ],
             tools=[_PREDICTION_TOOL],
+            # Must stay "auto": deepseek-v4-flash serves this call in "thinking mode"
+            # by default, and its API rejects a forced tool_choice outright (400:
+            # "Thinking mode does not support this tool_choice").
             tool_choice="auto",
         )
     except Exception as e:
         # Network/timeout/API errors used to propagate uncaught -- same fix
         # already applied to predict.py's DeepSeek call: one flaky call
         # shouldn't crash an entire validate.py/backtest run.
-        print(f"[WARN] Kimi call failed for {ticker}: {e} -- submitting 0.5 placeholder.")
+        print(f"[WARN] DeepSeek call failed for {ticker}: {e} -- submitting 0.5 placeholder.")
         return 0.5
 
     message = resp.choices[0].message

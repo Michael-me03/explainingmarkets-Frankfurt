@@ -23,10 +23,18 @@ from openai import OpenAI
 from pydantic import BaseModel, Field
 
 from ace.store import Bullet
-from predict import DEEPSEEK_BASE_URL, DEEPSEEK_MODEL, SYSTEM_PROMPT as GENERATOR_SYSTEM_PROMPT
+from predict import DEEPSEEK_BASE_URL, SYSTEM_PROMPT as GENERATOR_SYSTEM_PROMPT
 
 REFLECTOR_TIMEOUT_SECONDS = 120.0
 MAX_BULLETS_PER_BATCH = 1
+
+# Deliberately the stronger/pricier tier, independent of whatever predict.py's
+# Generator uses (deepseek-v4-flash) -- the Reflector is called once per epoch
+# (~10 times for a full training run, vs. ~700 Generator calls per epoch), so
+# the cost of the pro tier here is negligible, and its job -- condensing a
+# batch of misses into one generalizable rule -- is exactly the kind of
+# distillation/reasoning task the stronger model should be better at.
+REFLECTOR_MODEL = "deepseek-v4-pro"
 
 _client: OpenAI | None = None
 
@@ -42,6 +50,7 @@ class MissRecord:
     predicted_percentile: float
     rationale: str | None
     actual_percentile: float  # `y` from examples.scoring.add_percentiles
+    sec_context: str | None = None  # predict._sec_context_text(ticker, as_of) -- SEC filings + insider activity
 
     @property
     def abs_error(self) -> float:
@@ -108,6 +117,17 @@ propose a bullet for a genuinely new pattern not already covered, and don't
 propose anything that contradicts the base instructions' calibration
 discipline (e.g. its base-rate/extremes guidance).
 
+Each miss also carries a "SEC/insider data" line -- recent filing types/dates
+and a 90-day insider Form 4 (insider-transaction) filing count, both bounded to
+what was public at prediction time. This channel is new and has not yet
+produced a rulebook bullet, so don't let it get crowded out by the
+fundamentals-style patterns (guidance, valuation, momentum) you're more used
+to spotting: explicitly check whether elevated or absent insider filing
+activity, or a specific filing type, coincides with this batch's misses before
+defaulting to a non-SEC hypothesis. Only propose a bullet grounded in this data
+if you see a real, non-generic pattern across the batch -- don't force one
+just because the field is there.
+
 Write one general heuristic (not a restatement of one event's facts) that
 would help a future prediction avoid the same class of error. Tag it with a
 short category.
@@ -134,6 +154,7 @@ def _format_miss(m: MissRecord) -> str:
         f"  predicted={m.predicted_percentile:.2f} actual={m.actual_percentile:.2f} "
         f"error={m.abs_error:.2f}\n"
         f"  rationale given: {m.rationale or '(none)'}\n"
+        f"  SEC/insider data: {m.sec_context or '(unavailable)'}\n"
         f"  summary: {m.summary_text[:600]}"
     )
 
@@ -171,23 +192,24 @@ def reflect(
     )
 
     resp = _get_client().chat.completions.create(
-        model=DEEPSEEK_MODEL,
+        model=REFLECTOR_MODEL,
         temperature=1,
         messages=[
             {"role": "system", "content": REFLECTOR_SYSTEM_PROMPT},
             {"role": "user", "content": user_prompt},
         ],
         tools=[_REFLECT_TOOL],
-        # "auto", not forced -- deepseek-v4-flash's thinking mode rejects a
-        # forced tool_choice (400: "Thinking mode does not support this
-        # tool_choice"), same constraint as predict.py's _ask_llm.
+        # "auto", not forced -- DeepSeek's thinking-mode models reject a
+        # forced tool_choice outright (400: "Thinking mode does not support
+        # this tool_choice"), confirmed for deepseek-v4-flash in predict.py's
+        # _ask_llm; kept "auto" here too for deepseek-v4-pro on the same basis.
         tool_choice="auto",
     )
 
     tool_calls = resp.choices[0].message.tool_calls
     if not tool_calls:
         return []
-
+        
     try:
         arguments = json.loads(tool_calls[0].function.arguments)
         parsed = ReflectorOutput.model_validate(arguments)

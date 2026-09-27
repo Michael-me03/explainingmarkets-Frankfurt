@@ -1,0 +1,175 @@
+<mxfile host="65bd71144e">
+    <diagram id="ace-arch-v2" name="ACE Framework — Architecture (remote/local)">
+        <mxGraphModel dx="1430" dy="1764" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1900" pageHeight="860" math="0" shadow="0">
+            <root>
+                <mxCell id="0"/>
+                <mxCell id="1" parent="0"/>
+                <mxCell id="local" value="LOCAL — workspace" style="swimlane;startSize=36;html=1;whiteSpace=wrap;rounded=1;fillColor=#f3f6fb;strokeColor=#6b7a99;fontStyle=1;fontColor=#24292f;" parent="1" vertex="1">
+                    <mxGeometry x="20" y="30" width="920" height="780" as="geometry"/>
+                </mxCell>
+                <mxCell id="data" value="DATA SOURCES (local fetchers)" style="swimlane;startSize=28;html=1;whiteSpace=wrap;rounded=1;fillColor=#fff8c5;strokeColor=#9a6700;fontStyle=1;fontColor=#24292f;" parent="local" vertex="1">
+                    <mxGeometry x="30" y="70" width="260" height="280" as="geometry"/>
+                </mxCell>
+                <mxCell id="sec" value="SEC Filings Provider&lt;br&gt;recent filings, point-in-time safe" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff8c5;strokeColor=#9a6700;fontColor=#24292f;" parent="data" vertex="1">
+                    <mxGeometry x="30" y="60" width="200" height="70" as="geometry"/>
+                </mxCell>
+                <mxCell id="arch" value="Historical Event Archive&lt;br&gt;events + summaries + outcomes" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff8c5;strokeColor=#9a6700;fontColor=#24292f;" parent="data" vertex="1">
+                    <mxGeometry x="30" y="180" width="200" height="70" as="geometry"/>
+                </mxCell>
+                <mxCell id="ace" value="ACE TESTING — automated loop (ace/train.py)" style="swimlane;startSize=28;html=1;whiteSpace=wrap;rounded=1;fillColor=#ddf4ff;strokeColor=#0969da;fontStyle=1;fontColor=#24292f;" parent="local" vertex="1">
+                    <mxGeometry x="320" y="70" width="280" height="640" as="geometry"/>
+                </mxCell>
+                <mxCell id="t1" value="Sampled historical events&lt;br&gt;(training quarters)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ddf4ff;strokeColor=#0969da;fontColor=#24292f;" parent="ace" vertex="1">
+                    <mxGeometry x="20" y="45" width="240" height="45" as="geometry"/>
+                </mxCell>
+                <mxCell id="t2" value="Generator — LLM predictions&lt;br&gt;using current learned rules" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ddf4ff;strokeColor=#0969da;fontColor=#24292f;" parent="ace" vertex="1">
+                    <mxGeometry x="20" y="120" width="240" height="55" as="geometry"/>
+                </mxCell>
+                <mxCell id="t3" value="Miss analysis&lt;br&gt;rank by |error|" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ddf4ff;strokeColor=#0969da;fontColor=#24292f;" parent="ace" vertex="1">
+                    <mxGeometry x="20" y="205" width="240" height="45" as="geometry"/>
+                </mxCell>
+                <mxCell id="t4" value="Reflector — propose rule updates" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ddf4ff;strokeColor=#0969da;fontColor=#24292f;" parent="ace" vertex="1">
+                    <mxGeometry x="20" y="280" width="240" height="45" as="geometry"/>
+                </mxCell>
+                <mxCell id="t5" value="Curator — merge rule updates" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ddf4ff;strokeColor=#0969da;fontColor=#24292f;" parent="ace" vertex="1">
+                    <mxGeometry x="20" y="355" width="240" height="45" as="geometry"/>
+                </mxCell>
+                <mxCell id="t6" value="Validation gate&lt;br&gt;held-out quarter" style="rhombus;whiteSpace=wrap;html=1;fillColor=#fff8c5;strokeColor=#9a6700;fontColor=#24292f;" parent="ace" vertex="1">
+                    <mxGeometry x="35" y="430" width="210" height="60" as="geometry"/>
+                </mxCell>
+                <mxCell id="rb" value="Learned Rules Store&lt;br&gt;(persisted on accept)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ddf4ff;strokeColor=#0969da;fontColor=#24292f;" parent="ace" vertex="1">
+                    <mxGeometry x="20" y="540" width="240" height="55" as="geometry"/>
+                </mxCell>
+                <mxCell id="e_t1_t2" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#57606a;" parent="ace" source="t1" target="t2" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="e_t2_t3" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#57606a;" parent="ace" source="t2" target="t3" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="e_t3_t4" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#57606a;" parent="ace" source="t3" target="t4" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="e_t4_t5" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#57606a;" parent="ace" source="t4" target="t5" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="e_t5_t6" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#57606a;" parent="ace" source="t5" target="t6" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="e_t6_rb" value="accept → persist" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#1a7f37;fontColor=#1a7f37;fontStyle=1;" parent="ace" source="t6" target="rb" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="e_rb_t2" value="next epoch" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#0969da;fontColor=#0969da;dashed=1;fontStyle=1;" parent="ace" source="rb" target="t2" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="e_t6_t3" value="reject → keep" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#cf222e;fontColor=#cf222e;fontStyle=1;" parent="ace" source="t6" target="t3" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="comp" value="OFFLINE STRATEGY COMPARISON — manual (notebook)" style="swimlane;startSize=28;html=1;whiteSpace=wrap;rounded=1;fillColor=#ffebe9;strokeColor=#cf222e;fontStyle=1;fontColor=#24292f;" parent="local" vertex="1">
+                    <mxGeometry x="630" y="70" width="280" height="310" as="geometry"/>
+                </mxCell>
+                <mxCell id="e1" value="Candidate strategies&lt;br&gt;(SEC signal active)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffebe9;strokeColor=#cf222e;fontColor=#24292f;" parent="comp" vertex="1">
+                    <mxGeometry x="20" y="45" width="240" height="60" as="geometry"/>
+                </mxCell>
+                <mxCell id="e2" value="Contest scoring&lt;br&gt;delta R²" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffebe9;strokeColor=#cf222e;fontColor=#24292f;" parent="comp" vertex="1">
+                    <mxGeometry x="20" y="135" width="240" height="50" as="geometry"/>
+                </mxCell>
+                <mxCell id="e3" value="Performance log" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffebe9;strokeColor=#cf222e;fontColor=#24292f;" parent="comp" vertex="1">
+                    <mxGeometry x="20" y="220" width="240" height="50" as="geometry"/>
+                </mxCell>
+                <mxCell id="e_e1_e2" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#57606a;" parent="comp" source="e1" target="e2" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="e_e2_e3" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#57606a;" parent="comp" source="e2" target="e3" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="m_edit" value="MANUAL — edit learned rules" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe8c6;strokeColor=#d07800;fontColor=#7a4f00;dashed=1;fontStyle=1;" parent="local" vertex="1">
+                    <mxGeometry x="630" y="420" width="280" height="55" as="geometry"/>
+                </mxCell>
+                <mxCell id="m_notebook" value="MANUAL — run strategy comparison" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe8c6;strokeColor=#d07800;fontColor=#7a4f00;dashed=1;fontStyle=1;" parent="local" vertex="1">
+                    <mxGeometry x="630" y="500" width="280" height="55" as="geometry"/>
+                </mxCell>
+                <mxCell id="m_train" value="MANUAL — run ACE training" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe8c6;strokeColor=#d07800;fontColor=#7a4f00;dashed=1;fontStyle=1;" parent="local" vertex="1">
+                    <mxGeometry x="320" y="720" width="280" height="50" as="geometry"/>
+                </mxCell>
+                <mxCell id="m_commit" value="MANUAL — commit to git" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe8c6;strokeColor=#d07800;fontColor=#7a4f00;dashed=1;fontStyle=1;" parent="local" vertex="1">
+                    <mxGeometry x="30" y="720" width="260" height="50" as="geometry"/>
+                </mxCell>
+                <mxCell id="remote" value="REMOTE — Modal (deployed app)" style="swimlane;startSize=36;html=1;whiteSpace=wrap;rounded=1;fillColor=#e6f6ea;strokeColor=#1a7f37;fontStyle=1;fontColor=#24292f;" parent="1" vertex="1">
+                    <mxGeometry x="980" y="30" width="560" height="780" as="geometry"/>
+                </mxCell>
+                <mxCell id="m_deploy" value="MANUAL — deploy to Modal" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe8c6;strokeColor=#d07800;fontColor=#7a4f00;dashed=1;fontStyle=1;" parent="remote" vertex="1">
+                    <mxGeometry x="160" y="70" width="240" height="50" as="geometry"/>
+                </mxCell>
+                <mxCell id="live" value="LIVE PREDICTION (deployed)" style="swimlane;startSize=28;html=1;whiteSpace=wrap;rounded=1;fillColor=#dafbe1;strokeColor=#1a7f37;fontStyle=1;fontColor=#24292f;" parent="remote" vertex="1">
+                    <mxGeometry x="130" y="150" width="300" height="370" as="geometry"/>
+                </mxCell>
+                <mxCell id="l1" value="Verified event webhook" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dafbe1;strokeColor=#1a7f37;fontColor=#24292f;" parent="live" vertex="1">
+                    <mxGeometry x="40" y="45" width="220" height="45" as="geometry"/>
+                </mxCell>
+                <mxCell id="l2" value="Prediction engine&lt;br&gt;summary-only" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dafbe1;strokeColor=#1a7f37;fontColor=#24292f;" parent="live" vertex="1">
+                    <mxGeometry x="40" y="120" width="220" height="50" as="geometry"/>
+                </mxCell>
+                <mxCell id="l3" value="LLM reasoning&lt;br&gt;with deployed rules" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dafbe1;strokeColor=#1a7f37;fontColor=#24292f;" parent="live" vertex="1">
+                    <mxGeometry x="40" y="200" width="220" height="55" as="geometry"/>
+                </mxCell>
+                <mxCell id="l4" value="Submit prediction" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dafbe1;strokeColor=#1a7f37;fontColor=#24292f;" parent="live" vertex="1">
+                    <mxGeometry x="40" y="285" width="220" height="45" as="geometry"/>
+                </mxCell>
+                <mxCell id="e_l1_l2" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#57606a;" parent="live" source="l1" target="l2" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="e_l2_l3" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#57606a;" parent="live" source="l2" target="l3" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="e_l3_l4" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#57606a;" parent="live" source="l3" target="l4" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="platform" value="Platform / Leaderboard&lt;br&gt;(scores live submissions)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dafbe1;strokeColor=#1a7f37;fontColor=#24292f;" parent="remote" vertex="1">
+                    <mxGeometry x="130" y="570" width="300" height="60" as="geometry"/>
+                </mxCell>
+                <mxCell id="x_arch_t1" value="summaries + outcomes" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#9a6700;fontColor=#9a6700;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" parent="1" source="arch" target="t1" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="x_sec_e1" value="SEC signal" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#9a6700;fontColor=#9a6700;dashed=1;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" parent="1" source="sec" target="e1" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="x_rb_e1" value="learned rules" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#0969da;fontColor=#0969da;dashed=1;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" parent="1" source="rb" target="e1" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="x_rb_deploy" value="deployed snapshot" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#0969da;fontColor=#0969da;dashed=1;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" parent="1" source="rb" target="m_deploy" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="x_deploy_l3" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#1a7f37;exitX=0.992;exitY=0.64;entryX=1;entryY=0.5;exitDx=0;exitDy=0;exitPerimeter=0;entryDx=0;entryDy=0;" parent="1" source="m_deploy" target="l3" edge="1">
+                    <mxGeometry relative="1" as="geometry">
+                        <Array as="points">
+                            <mxPoint x="1378" y="125"/>
+                            <mxPoint x="1490" y="125"/>
+                            <mxPoint x="1490" y="410"/>
+                            <mxPoint x="1370" y="410"/>
+                        </Array>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="x_l4_platform" value="submit" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#1a7f37;fontColor=#1a7f37;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" parent="1" source="l4" target="platform" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="x_edit_rb" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#d07800;dashed=1;exitX=0;exitY=0.5;entryX=1;entryY=0.5;" parent="1" source="m_edit" target="rb" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="x_train_t1" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#d07800;dashed=1;exitX=0.5;exitY=0;entryX=0.5;entryY=1;" parent="1" source="m_train" target="t1" edge="1">
+                    <mxGeometry relative="1" as="geometry">
+                        <Array as="points">
+                            <mxPoint x="350" y="750"/>
+                            <mxPoint x="350" y="190"/>
+                        </Array>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="x_notebook_e1" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#d07800;dashed=1;exitX=0.5;exitY=0;entryX=0.5;entryY=1;" parent="1" source="m_notebook" target="e1" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="JzD53CQAio2CW7RTUFr0-2" value="Text" style="text;html=1;align=center;verticalAlign=middle;resizable=0;points=[];autosize=1;strokeColor=none;fillColor=none;" vertex="1" parent="1">
+                    <mxGeometry x="1835" y="-2" width="50" height="30" as="geometry"/>
+                </mxCell>
+            </root>
+        </mxGraphModel>
+    </diagram>
+</mxfile>
